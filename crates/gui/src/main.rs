@@ -20,9 +20,10 @@ use notify::{recommended_watcher, RecursiveMode, Watcher};
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1240.0, 780.0])
-            .with_min_inner_size([980.0, 640.0])
-            .with_title("Lupa - Bsqueda Local"),
+            .with_inner_size([1280.0, 840.0])
+            .with_min_inner_size([1024.0, 768.0])
+            .with_title("Lupa | Local AI Indexer")
+            .with_transparent(true),
         ..Default::default()
     };
 
@@ -38,23 +39,28 @@ fn main() -> eframe::Result<()> {
 
 fn apply_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-    style.spacing.button_padding = egui::vec2(12.0, 8.0);
-    style.spacing.menu_margin = egui::Margin::same(10.0);
-    style.spacing.window_margin = egui::Margin::same(12.0);
+    style.spacing.item_spacing = egui::vec2(12.0, 12.0);
+    style.spacing.button_padding = egui::vec2(16.0, 10.0);
+    style.spacing.menu_margin = egui::Margin::same(12.0);
+    style.spacing.window_margin = egui::Margin::same(16.0);
+    style.spacing.interact_size = egui::vec2(28.0, 30.0);
 
     style.text_styles = [
         (
             egui::TextStyle::Heading,
-            FontId::new(32.0, FontFamily::Proportional),
+            FontId::new(30.0, FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Name("Subheading".into()),
+            FontId::new(22.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Body,
-            FontId::new(16.0, FontFamily::Proportional),
+            FontId::new(15.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Button,
-            FontId::new(15.0, FontFamily::Proportional),
+            FontId::new(14.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Monospace,
@@ -62,39 +68,60 @@ fn apply_style(ctx: &egui::Context) {
         ),
         (
             egui::TextStyle::Small,
-            FontId::new(13.0, FontFamily::Proportional),
+            FontId::new(12.0, FontFamily::Proportional),
         ),
     ]
     .into();
 
-    // Dark palette with purple accents to match the requested style.
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = Color32::from_rgb(20, 20, 27);
-    visuals.window_fill = Color32::from_rgb(20, 20, 27);
-    visuals.extreme_bg_color = Color32::from_rgb(16, 16, 22);
 
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(34, 34, 44);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(62, 60, 78));
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(223, 223, 232));
-    visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(43, 43, 58);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(81, 76, 112));
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(225, 225, 225));
-    visuals.widgets.inactive.rounding = egui::Rounding::same(8.0);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 55, 82);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(128, 110, 186));
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(240, 240, 240));
-    visuals.widgets.hovered.rounding = egui::Rounding::same(8.0);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(124, 74, 227);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, Color32::from_rgb(175, 138, 255));
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::from_rgb(247, 247, 247));
-    visuals.widgets.active.rounding = egui::Rounding::same(8.0);
+    // Modern Midnight/Space Palette
+    let bg_deep = Color32::from_rgb(10, 10, 15);
+    let bg_pane = Color32::from_rgb(17, 17, 25);
+    let bg_hover = Color32::from_rgb(30, 30, 45);
+    let accent_primary = Color32::from_rgb(99, 102, 241); // Indigo
+    let accent_light = Color32::from_rgb(129, 140, 248);
+    let text_dim = Color32::from_rgb(150, 155, 180);
+    let text_bright = Color32::from_rgb(230, 235, 255);
 
-    visuals.selection.bg_fill = Color32::from_rgb(124, 74, 227);
-    visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(175, 138, 255));
-    visuals.override_text_color = Some(Color32::from_rgb(222, 222, 222));
-    visuals.window_rounding = egui::Rounding::same(8.0);
-    visuals.menu_rounding = egui::Rounding::same(8.0);
+    visuals.panel_fill = bg_deep;
+    visuals.window_fill = bg_pane;
+    visuals.extreme_bg_color = Color32::from_rgb(5, 5, 8); // For text edits
+
+    // Rounding and Strokes
+    let rounding = egui::Rounding::same(12.0);
+    visuals.window_rounding = rounding;
+    visuals.menu_rounding = rounding;
+
+    // Widgets
+    // Non-interactive (e.g. frames)
+    visuals.widgets.noninteractive.bg_fill = bg_pane;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(40, 40, 60));
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text_dim);
+    visuals.widgets.noninteractive.rounding = rounding;
+
+    // Inactive (default state)
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(25, 25, 38);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(0.0, Color32::TRANSPARENT);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, text_dim);
+    visuals.widgets.inactive.rounding = rounding;
+
+    // Hovered
+    visuals.widgets.hovered.bg_fill = bg_hover;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent_primary);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, text_bright);
+    visuals.widgets.hovered.rounding = rounding;
+
+    // Active (clicked/selected)
+    visuals.widgets.active.bg_fill = accent_primary;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent_light);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, text_bright);
+    visuals.widgets.active.rounding = rounding;
+
+    visuals.selection.bg_fill = accent_primary.linear_multiply(0.3);
+    visuals.selection.stroke = Stroke::new(1.0, accent_primary);
+
+    visuals.override_text_color = Some(text_dim);
 
     style.visuals = visuals;
     ctx.set_style(style);
@@ -426,298 +453,459 @@ impl LupaApp {
             }
         }
     }
-
     fn top_search_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Q")
-                    .size(30.0)
-                    .color(Color32::from_rgb(155, 96, 255)),
-            );
-            ui.label(RichText::new("LUPA").size(38.0).strong());
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new("Offline | Privado | Ultra rapido").small());
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new(if self.watch.running {
-                        "Monitor ON"
-                    } else {
-                        "Monitor OFF"
-                    })
-                    .small()
-                    .color(if self.watch.running {
-                        Color32::from_rgb(160, 236, 200)
-                    } else {
-                        Color32::from_rgb(255, 196, 196)
-                    }),
-                );
-            });
-        });
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.label(RichText::new("LUPA").strong().size(34.0));
 
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let search_w = (ui.available_width() - 140.0).max(220.0);
+            let search_bar_width = (ui.available_width() - 120.0).max(220.0);
             let response = ui.add_sized(
-                [search_w, 48.0],
+                [search_bar_width, 42.0],
                 egui::TextEdit::singleline(&mut self.query)
-                    .hint_text("Buscar archivos en segundos...")
-                    .desired_width(search_w),
+                    .hint_text("Search documents, code, or images...")
+                    .margin(egui::vec2(12.0, 9.0)),
             );
             let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+
             if ui
-                .add_enabled(
-                    !self.busy && !self.query.trim().is_empty(),
-                    egui::Button::new(RichText::new("BUSCAR").strong().size(18.0)),
+                .add_sized(
+                    [96.0, 42.0],
+                    egui::Button::new(RichText::new("Search").strong()),
                 )
+                .on_hover_cursor(CursorIcon::PointingHand)
                 .clicked()
                 || pressed_enter
             {
                 self.spawn_search();
             }
-        });
 
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    !self.busy && !self.watch.running,
-                    egui::Button::new("Indexar"),
-                )
-                .clicked()
-            {
-                self.spawn_build();
-            }
-            if !self.watch.running {
-                if ui
-                    .add_enabled(!self.busy, egui::Button::new("Monitor"))
-                    .clicked()
-                {
-                    self.start_watch();
-                }
-            } else if ui.button("Detener").clicked() {
-                self.stop_watch();
-            }
-            if ui
-                .add_enabled(!self.busy, egui::Button::new("Doctor"))
-                .clicked()
-            {
-                self.spawn_doctor();
-            }
+            let status_text = if self.busy {
+                "Indexing"
+            } else if self.watch.running {
+                "Monitoring"
+            } else {
+                "Idle"
+            };
+            ui.label(
+                RichText::new(status_text)
+                    .small()
+                    .color(Color32::from_rgb(160, 170, 185)),
+            );
         });
-
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(&self.status)
-                .small()
-                .color(Color32::from_rgb(180, 180, 202)),
-        );
     }
 
     fn control_panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label(
-                RichText::new("RECIENTES")
-                    .small()
-                    .strong()
-                    .color(Color32::from_rgb(150, 150, 170)),
-            );
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::All, "Recientes")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::All;
-            }
+        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                let count_for = |f: FileFilter, s: &Option<SearchResult>| -> usize {
+                    s.as_ref()
+                        .map(|res| {
+                            res.hits
+                                .iter()
+                                .filter(|h| matches_filter(&h.path, f))
+                                .count()
+                        })
+                        .unwrap_or(0)
+                };
 
-            ui.add_space(16.0);
-            ui.label(
-                RichText::new("CATEGORIAS")
-                    .small()
-                    .strong()
-                    .color(Color32::from_rgb(150, 150, 170)),
-            );
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::Documents, "Documentos")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::Documents;
-            }
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::Images, "Imagenes")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::Images;
-            }
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::Media, "Videos / Audio")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::Media;
-            }
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::Code, "Codigo")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::Code;
-            }
-            if ui
-                .selectable_label(self.selected_filter == FileFilter::Pdf, "PDF")
-                .clicked()
-            {
-                self.selected_filter = FileFilter::Pdf;
-            }
+                ui.label(
+                    RichText::new("SYSTEM TOOLS")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(140, 150, 170)),
+                );
+                ui.add_space(6.0);
 
-            ui.add_space(18.0);
-            ui.label(
-                RichText::new("CARPETA BASE")
-                    .small()
-                    .strong()
-                    .color(Color32::from_rgb(150, 150, 170)),
-            );
-            ui.add_sized(
-                [ui.available_width(), 30.0],
-                egui::TextEdit::singleline(&mut self.root),
-            );
-            if ui.button("Elegir carpeta").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.root = path.display().to_string();
+                let full_w = ui.available_width();
+                if ui
+                    .add_enabled(
+                        !self.busy && !self.watch.running,
+                        egui::Button::new("\u{26A1}  Build Index")
+                            .min_size(egui::vec2(full_w, 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.spawn_build();
                 }
-            }
-        });
+                if !self.watch.running {
+                    if ui
+                        .add_enabled(
+                            !self.busy,
+                            egui::Button::new("\u{1F441}  Start Monitor")
+                                .min_size(egui::vec2(full_w, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.start_watch();
+                    }
+                } else if ui
+                    .add(
+                        egui::Button::new("\u{1F6D1}  Stop Monitor")
+                            .min_size(egui::vec2(full_w, 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.stop_watch();
+                }
+                if ui
+                    .add_enabled(
+                        !self.busy,
+                        egui::Button::new("\u{1FA7A}  System Doctor")
+                            .min_size(egui::vec2(full_w, 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.spawn_doctor();
+                }
+
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.label(
+                    RichText::new("COLLECTIONS")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(140, 150, 170)),
+                );
+                let categories = [
+                    (FileFilter::All, "\u{1F55A}  Recents"),
+                    (FileFilter::Documents, "\u{1F4C4}  Documents"),
+                    (FileFilter::Images, "\u{1F5BC}  Images"),
+                    (FileFilter::Media, "\u{1F3AC}  Media"),
+                    (FileFilter::Code, "\u{1F4BB}  Source Code"),
+                    (FileFilter::Pdf, "\u{1F4D5}  PDF Files"),
+                ];
+                for (filter, label) in categories {
+                    let is_selected = self.selected_filter == filter;
+                    let count = count_for(filter, &self.last_search);
+                    let mut clicked = false;
+                    egui::Frame::none()
+                        .fill(if is_selected {
+                            Color32::from_rgb(54, 51, 86)
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .show(ui, |ui| {
+                            let r = ui
+                                .horizontal(|ui| {
+                                    ui.label(RichText::new(label));
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!("{count}"))
+                                                    .small()
+                                                    .color(Color32::from_rgb(146, 155, 188)),
+                                            );
+                                        },
+                                    );
+                                })
+                                .response
+                                .interact(Sense::click());
+                            if r.clicked() {
+                                clicked = true;
+                            }
+                            if r.hovered() {
+                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                            }
+                        });
+                    if clicked {
+                        self.selected_filter = filter;
+                    }
+                }
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.label(
+                    RichText::new("INDEX PATH")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(140, 150, 170)),
+                );
+                ui.horizontal(|ui: &mut egui::Ui| {
+                    let input_w = (ui.available_width() - 34.0).max(120.0);
+                    ui.add_sized(
+                        [input_w, 30.0],
+                        egui::TextEdit::singleline(&mut self.root).hint_text("Path to index..."),
+                    );
+                    if ui.button("...").on_hover_text("Choose folder").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            self.root = path.display().to_string();
+                        }
+                    }
+                });
+
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new("ADVANCED SEARCH")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(140, 150, 170)),
+                );
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.regex)
+                            .hint_text("Regex (e.g. pdf|rs)"),
+                    )
+                    .changed()
+                    && !self.busy
+                    && !self.query.is_empty()
+                {
+                    self.spawn_search();
+                }
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.path_prefix)
+                            .hint_text("Path prefix (e.g. projects/)"),
+                    )
+                    .changed()
+                    && !self.busy
+                    && !self.query.is_empty()
+                {
+                    self.spawn_search();
+                }
+                ui.label(format!("Max Results: {}", self.limit));
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.limit, 5..=500)
+                            .show_value(false)
+                            .step_by(1.0),
+                    )
+                    .changed()
+                    && !self.busy
+                    && !self.query.is_empty()
+                {
+                    self.spawn_search();
+                }
+                if ui
+                    .checkbox(&mut self.highlight, "Show text snippets")
+                    .changed()
+                    && !self.busy
+                    && !self.query.is_empty()
+                {
+                    self.spawn_search();
+                }
+            });
     }
 
     fn results_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
-            ui.heading("Resultados");
+            ui.label(
+                RichText::new("Search Results")
+                    .strong()
+                    .size(22.0)
+                    .color(Color32::WHITE),
+            );
             if let Some(search) = &self.last_search {
+                ui.add_space(8.0);
                 ui.label(
-                    RichText::new(format!("{} encontrados", search.total_hits))
-                        .color(Color32::from_rgb(177, 171, 214)),
+                    RichText::new(format!("\u{2022} {} hits", search.total_hits))
+                        .color(Color32::from_rgb(120, 125, 150)),
                 );
                 ui.label(
-                    RichText::new(format!("{} ms", search.took_ms))
+                    RichText::new(format!("\u{2022} {}ms", search.took_ms))
                         .small()
-                        .color(Color32::from_rgb(177, 171, 214)),
+                        .color(Color32::from_rgb(99, 102, 241)),
                 );
             }
         });
 
-        ui.add_space(8.0);
+        ui.add_space(16.0);
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if let Some(result) = &self.last_search {
-                let hits = result
-                    .hits
-                    .iter()
-                    .filter(|h| matches_filter(&h.path, self.selected_filter))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if hits.is_empty() {
-                    ui.add_space(20.0);
-                    ui.label("No hay resultados para este filtro.");
-                    return;
-                }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(result) = &self.last_search {
+                    let hits = result
+                        .hits
+                        .iter()
+                        .filter(|h| matches_filter(&h.path, self.selected_filter))
+                        .cloned()
+                        .collect::<Vec<_>>();
 
-                let selected_missing = match self.selected_path.as_ref() {
-                    Some(p) => !hits.iter().any(|h| &h.path == p),
-                    None => true,
-                };
-                if selected_missing {
-                    self.selected_path = hits.first().map(|h| h.path.clone());
-                }
-
-                for (idx, hit) in hits.iter().enumerate() {
-                    let is_selected = self.selected_path.as_deref() == Some(hit.path.as_str());
-                    if self.result_row(ui, ctx, idx + 1, hit, is_selected) {
-                        self.selected_path = Some(hit.path.clone());
+                    if hits.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(
+                                RichText::new("No files found in this collection.")
+                                    .color(Color32::from_rgb(100, 116, 139)),
+                            );
+                        });
+                        return;
                     }
-                    ui.add_space(8.0);
+
+                    let selected_missing = match self.selected_path.as_ref() {
+                        Some(p) => !hits.iter().any(|h| &h.path == p),
+                        None => true,
+                    };
+                    if selected_missing {
+                        self.selected_path = hits.first().map(|h| h.path.clone());
+                    }
+
+                    for (idx, hit) in hits.iter().enumerate() {
+                        let is_selected = self.selected_path.as_deref() == Some(hit.path.as_str());
+                        if self.result_row(ui, ctx, idx + 1, hit, is_selected) {
+                            self.selected_path = Some(hit.path.clone());
+                        }
+                        ui.add_space(10.0);
+                    }
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(100.0);
+                            ui.label(RichText::new("\u{1F50D}").size(48.0));
+                            ui.add_space(12.0);
+                            ui.label(
+                                RichText::new("Ready to explore your local files")
+                                    .strong()
+                                    .size(20.0)
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                            ui.label(
+                                RichText::new("Type something in the search bar above")
+                                    .color(Color32::from_rgb(100, 116, 139)),
+                            );
+                        });
+                    });
                 }
-            } else {
-                ui.add_space(20.0);
-                ui.label("Escribe algo en la barra superior y presiona Buscar.");
-            }
-        });
+            });
     }
 
     fn right_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("FILTROS");
-        ui.add_space(6.0);
+        ui.spacing_mut().item_spacing.y = 12.0;
+        egui::Frame::none()
+            .fill(Color32::from_rgb(20, 20, 30))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("VISTA PREVIA")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(99, 102, 241)),
+                );
+                ui.add_space(8.0);
 
-        ui.label("Tipo");
-        ui.add_sized(
-            [ui.available_width(), 30.0],
-            egui::TextEdit::singleline(&mut self.regex).hint_text("pdf|docx|png|rs"),
-        );
-        ui.add_space(6.0);
-        ui.label("Path");
-        ui.add_sized(
-            [ui.available_width(), 30.0],
-            egui::TextEdit::singleline(&mut self.path_prefix).hint_text("C:/Users/..."),
-        );
-        ui.add_space(6.0);
-        ui.label("Cantidad");
-        ui.add(egui::Slider::new(&mut self.limit, 5..=200).text("Resultados"));
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.highlight, "");
-            ui.label("Mostrar fragmentos");
-        });
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("ESTADISTICAS")
-                .small()
-                .strong()
-                .color(Color32::from_rgb(150, 150, 170)),
-        );
-        if let Some(stats) = &self.last_build {
-            ui.label(format!("{} archivos indexados", stats.scanned));
-            ui.label(format!("{} ms indexacion", stats.duration_ms));
-        } else {
-            ui.label("Sin indexacion reciente");
-        }
-        if let Some(search) = &self.last_search {
-            ui.label(format!("{} resultados", search.total_hits));
-            ui.label(format!("{} ms busqueda", search.took_ms));
-        } else {
-            ui.label("Sin busquedas recientes");
-        }
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("SELECCION")
-                .small()
-                .strong()
-                .color(Color32::from_rgb(150, 150, 170)),
-        );
-        if let Some(path) = self.selected_path.clone() {
-            if !self.preview_cache.contains_key(&path) {
-                let preview = self.load_preview_data_fast(ctx, &path);
-                self.preview_cache.insert(path.clone(), preview);
-            }
-            if let Some(preview) = self.preview_cache.get(&path) {
-                ui.label(RichText::new(&preview.name).strong());
-                ui.add(egui::Label::new(RichText::new(&preview.path).small()).wrap());
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Abrir").clicked() {
-                        let _ = open_file_path(Path::new(&preview.path));
+                if let Some(path) = self.selected_path.clone() {
+                    if !self.preview_cache.contains_key(&path) {
+                        let preview = self.load_preview_data_fast(ctx, &path);
+                        self.preview_cache.insert(path.clone(), preview);
                     }
-                    if ui.button("Carpeta").clicked() {
-                        if let Some(parent) = Path::new(&preview.path).parent() {
-                            let _ = open_folder_path(parent);
+                    if let Some(preview) = self.preview_cache.get(&path) {
+                        ui.label(
+                            RichText::new(&preview.name)
+                                .strong()
+                                .size(18.0)
+                                .color(Color32::WHITE),
+                        );
+                        ui.add(egui::Label::new(RichText::new(&preview.path).small()).wrap());
+                        let (kind, size_label, time_label) = file_meta_labels(&preview.path);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new(kind)
+                                    .small()
+                                    .color(Color32::from_rgb(130, 140, 180)),
+                            );
+                            ui.label(RichText::new(size_label).small());
+                            ui.label(RichText::new(time_label).small());
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("\u{1F680} Open").clicked() {
+                                let _ = open_file_path(Path::new(&preview.path));
+                            }
+                            if ui.button("\u{1F4CE} Open with...").clicked() {
+                                let _ = open_with_dialog(Path::new(&preview.path));
+                            }
+                            if ui.button("\u{1F4C1} Folder").clicked() {
+                                if let Some(parent) = Path::new(&preview.path).parent() {
+                                    let _ = open_folder_path(parent);
+                                }
+                            }
+                            if ui.button("\u{1F4CB} Copy").clicked() {
+                                ui.ctx().copy_text(preview.path.clone());
+                            }
+                        });
+
+                        ui.add_space(10.0);
+                        ui.label(
+                            RichText::new("Coincidencia en documento")
+                                .small()
+                                .strong()
+                                .color(Color32::from_rgb(99, 102, 241)),
+                        );
+                        if let Some(hit) = self.selected_hit() {
+                            if let Some(snippet) = hit.snippet {
+                                ui.add(egui::Label::new(RichText::new(snippet).small()).wrap());
+                            } else {
+                                ui.label(
+                                    RichText::new("Sin fragmento disponible para este archivo.")
+                                        .small()
+                                        .color(Color32::from_rgb(120, 130, 155)),
+                                );
+                            }
                         }
                     }
-                    if ui.button("Copiar").clicked() {
-                        ui.ctx().copy_text(preview.path.clone());
-                    }
-                });
-            }
-        } else {
-            ui.label("Selecciona un resultado.");
-        }
+                } else {
+                    ui.label(
+                        RichText::new("Selecciona un resultado para ver la vista previa.")
+                            .small()
+                            .color(Color32::from_rgb(120, 130, 155)),
+                    );
+                }
+            });
+
+        ui.add_space(8.0);
+        egui::Frame::none()
+            .fill(Color32::from_rgb(20, 20, 30))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("METRICAS")
+                        .small()
+                        .strong()
+                        .color(Color32::from_rgb(99, 102, 241)),
+                );
+                ui.add_space(8.0);
+                if let Some(search) = &self.last_search {
+                    ui.label(format!("Resultados: {}", search.total_hits));
+                    ui.label(format!("Tiempo busqueda: {}ms", search.took_ms));
+                } else {
+                    ui.label("Resultados: -");
+                    ui.label("Tiempo busqueda: -");
+                }
+                ui.add_space(6.0);
+                if let Some(stats) = &self.last_build {
+                    ui.label(format!("Indexados: {}", stats.scanned));
+                    ui.label(format!(
+                        "Nuevos/Act/Elim: {}/{}/{}",
+                        stats.indexed_new, stats.indexed_updated, stats.removed
+                    ));
+                    ui.label(format!("Tiempo indexacion: {}ms", stats.duration_ms));
+                } else {
+                    ui.label("Indexados: -");
+                    ui.label("Tiempo indexacion: -");
+                }
+            });
+    }
+
+    fn selected_hit(&self) -> Option<SearchHit> {
+        let selected = self.selected_path.as_ref()?;
+        let search = self.last_search.as_ref()?;
+        search.hits.iter().find(|h| &h.path == selected).cloned()
     }
 
     fn result_row(
@@ -728,122 +916,149 @@ impl LupaApp {
         hit: &SearchHit,
         is_selected: bool,
     ) -> bool {
-        let mut row_selected = false;
-        let mut action_clicked = false;
+        let mut row_clicked = false;
         let (ext, size_label, time_label) = file_meta_labels(&hit.path);
-        let frame = egui::Frame::group(ui.style())
-            .fill(if is_selected {
-                Color32::from_rgb(48, 41, 74)
-            } else {
-                Color32::from_rgb(33, 33, 43)
-            })
-            .rounding(egui::Rounding::same(14.0))
-            .inner_margin(egui::Margin::same(10.0))
-            .stroke(Stroke::new(
-                1.0,
-                if is_selected {
-                    Color32::from_rgb(152, 112, 255)
-                } else {
-                    Color32::from_rgb(69, 63, 97)
-                },
-            ));
 
-        let row_response = frame.show(ui, |ui| {
+        let bg_color = if is_selected {
+            Color32::from_rgb(30, 30, 45)
+        } else {
+            Color32::from_rgb(20, 20, 28)
+        };
+
+        let border_color = if is_selected {
+            Color32::from_rgb(99, 102, 241)
+        } else {
+            Color32::from_rgb(35, 35, 48)
+        };
+
+        let frame = egui::Frame::none()
+            .fill(bg_color)
+            .rounding(egui::Rounding::same(12.0))
+            .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+            .stroke(Stroke::new(1.0, border_color));
+
+        let inner_response = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                self.paint_thumbnail(ui, ctx, &hit.path);
-                ui.add_space(4.0);
+                // ICON / THUMBNAIL AREA
+                ui.allocate_ui(egui::vec2(60.0, 60.0), |ui| {
+                    self.paint_thumbnail(ui, ctx, &hit.path);
+                });
+
+                ui.add_space(8.0);
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                        let name = file_name_from_path(&hit.path);
+                        let title = RichText::new(name)
+                            .size(17.0)
+                            .strong()
+                            .color(if is_selected {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_rgb(209, 213, 219)
+                            });
+
+                        ui.label(title);
+
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
-                                RichText::new(format!("{:02}", rank))
-                                    .strong()
-                                    .color(Color32::from_rgb(160, 145, 232)),
+                                RichText::new(format!("#{}", rank))
+                                    .small()
+                                    .color(Color32::from_rgb(99, 102, 241)),
                             );
-
-                            let name = file_name_from_path(&hit.path);
-                            let title = RichText::new(name)
-                                .size(20.0)
-                                .strong()
-                                .color(Color32::from_rgb(236, 230, 255));
-                            let response = ui.add(egui::Label::new(title).sense(Sense::click()));
-                            if response.clicked() {
-                                row_selected = true;
-                            }
-
-                            if response.double_clicked() {
-                                let _ = open_file_path(Path::new(&hit.path));
-                            }
                         });
                     });
 
+                    ui.add_space(2.0);
                     ui.add(
                         egui::Label::new(
                             RichText::new(&hit.path)
                                 .small()
-                                .color(Color32::from_rgb(179, 179, 199)),
+                                .color(Color32::from_rgb(100, 116, 139)),
                         )
-                        .wrap(),
+                        .truncate(),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(ext)
-                                .small()
-                                .color(Color32::from_rgb(196, 186, 230)),
-                        );
-                        ui.add_space(10.0);
-                        ui.label(RichText::new(size_label).small());
-                        ui.add_space(10.0);
-                        ui.label(RichText::new(time_label).small());
-                        ui.add_space(10.0);
+                        // Extension Badge
+                        let ext_bg = Color32::from_rgb(31, 41, 55);
+                        egui::Frame::none()
+                            .fill(ext_bg)
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(ext.to_uppercase())
+                                        .small()
+                                        .strong()
+                                        .color(Color32::from_rgb(156, 163, 175)),
+                                );
+                            });
 
-                        if ui.small_button("Abrir").clicked() {
-                            action_clicked = true;
-                            let _ = open_file_path(Path::new(&hit.path));
-                        }
-                        if ui.small_button("Con...").clicked() {
-                            action_clicked = true;
-                            let _ = open_with_dialog(Path::new(&hit.path));
-                        }
-                        if ui.small_button("Dir").clicked() {
-                            action_clicked = true;
-                            if let Some(parent) = Path::new(&hit.path).parent() {
-                                let _ = open_folder_path(parent);
-                            }
-                        }
-                        if ui.small_button("Copiar").clicked() {
-                            action_clicked = true;
-                            ui.ctx().copy_text(hit.path.clone());
-                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(size_label)
+                                .small()
+                                .color(Color32::from_rgb(100, 116, 139)),
+                        );
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new(time_label)
+                                .small()
+                                .color(Color32::from_rgb(100, 116, 139)),
+                        );
                     });
                 });
             });
         });
 
-        let row_response = row_response.response;
-        if row_response.hovered() {
-            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-        }
-        let row_primary_click = row_response.hovered() && ui.input(|i| i.pointer.primary_clicked());
-        if row_primary_click && !action_clicked {
-            row_selected = true;
+        let response = ui.interact(
+            inner_response.response.rect,
+            inner_response.response.id,
+            Sense::click(),
+        );
+
+        if response.hovered() {
+            ctx.set_cursor_icon(CursorIcon::PointingHand);
         }
 
-        row_selected
+        if response.clicked() {
+            row_clicked = true;
+        }
+
+        if response.double_clicked() {
+            let _ = open_file_path(Path::new(&hit.path));
+        }
+
+        row_clicked
     }
 
     fn paint_thumbnail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, path: &str) {
         let entry = self.thumbnail_for_path(ctx, path);
         match entry {
             Thumbnail::Image(texture) => {
-                ui.image((texture.id(), egui::vec2(56.0, 56.0)));
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
+                ui.painter().rect_stroke(
+                    rect,
+                    10.0,
+                    Stroke::new(1.0, Color32::from_rgb(70, 73, 98)),
+                );
+                ui.painter().image(
+                    texture.id(),
+                    rect.shrink(2.0),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
             }
             Thumbnail::Badge { label, color } => {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
                 ui.painter().rect_filled(rect, 14.0, *color);
+                ui.painter().rect_stroke(
+                    rect,
+                    14.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40)),
+                );
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -878,11 +1093,17 @@ impl LupaApp {
 impl eframe::App for LupaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+
         let win_width = ctx.screen_rect().width();
-        let compact = win_width < 1220.0;
-        let show_right_panel = win_width >= 1040.0;
-        let left_width = if compact { 250.0 } else { 300.0 };
-        let right_width = if compact { 260.0 } else { 290.0 };
+        let show_right_panel = win_width >= 1100.0;
+        let left_width = 280.0;
+        let right_width = 320.0;
+
+        // Background Painting (simulating a slight gradient or depth)
+        let bg_color = ctx.style().visuals.panel_fill;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(bg_color))
+            .show(ctx, |_| {});
 
         if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Enter)) {
             if let Some(path) = self.selected_path.as_deref() {
@@ -890,55 +1111,59 @@ impl eframe::App for LupaApp {
             }
         }
 
+        // Header Panel
         egui::TopBottomPanel::top("top_search")
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(37, 37, 38))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
-                    .inner_margin(egui::Margin::same(16.0)),
+                    .fill(Color32::from_rgb(12, 12, 18))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(30, 30, 45)))
+                    .inner_margin(egui::Margin::symmetric(24.0, 12.0)),
             )
             .show(ctx, |ui| {
                 self.top_search_bar(ui);
             });
 
+        // Sidebar Panel
         egui::SidePanel::left("controls")
             .resizable(true)
             .default_width(left_width)
             .min_width(220.0)
-            .max_width(460.0)
+            .max_width(420.0)
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(37, 37, 38))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
-                    .inner_margin(egui::Margin::same(14.0)),
+                    .fill(Color32::from_rgb(15, 15, 22))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(25, 25, 38)))
+                    .inner_margin(egui::Margin::symmetric(20.0, 16.0)),
             )
             .show(ctx, |ui| {
                 self.control_panel(ui);
             });
 
+        // Right Detail Panel
         if show_right_panel {
             egui::SidePanel::right("activity")
                 .resizable(true)
                 .default_width(right_width)
-                .min_width(240.0)
-                .max_width(520.0)
+                .min_width(280.0)
+                .max_width(500.0)
                 .frame(
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(37, 37, 38))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
-                        .inner_margin(egui::Margin::same(14.0)),
+                        .fill(Color32::from_rgb(15, 15, 22))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(25, 25, 38)))
+                        .inner_margin(egui::Margin::same(20.0)),
                 )
                 .show(ctx, |ui| {
                     self.right_panel(ui, ctx);
                 });
         } else {
-            egui::TopBottomPanel::bottom("preview_compact")
+            egui::TopBottomPanel::bottom("mobile_right_panel")
                 .resizable(true)
-                .default_height(220.0)
+                .default_height(260.0)
+                .min_height(180.0)
                 .frame(
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(37, 37, 38))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
+                        .fill(Color32::from_rgb(15, 15, 22))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(25, 25, 38)))
                         .inner_margin(egui::Margin::same(12.0)),
                 )
                 .show(ctx, |ui| {
@@ -946,14 +1171,27 @@ impl eframe::App for LupaApp {
                 });
         }
 
+        // Main Content Area
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(30, 30, 30))
-                    .inner_margin(egui::Margin::same(14.0)),
+                    .fill(Color32::from_rgb(10, 10, 15))
+                    .inner_margin(egui::Margin::same(24.0)),
             )
             .show(ctx, |ui| {
                 self.results_panel(ui, ctx);
+
+                // Floating status toast if needed could go here
+                if !self.status.is_empty() && !self.busy {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
+                        ui.add_space(10.0);
+                        egui::Frame::popup(ui.style())
+                            .fill(Color32::from_rgb(30, 30, 45))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(&self.status).small());
+                            });
+                    });
+                }
             });
 
         ctx.request_repaint_after(Duration::from_millis(120));
