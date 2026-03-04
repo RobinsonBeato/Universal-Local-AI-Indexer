@@ -38,7 +38,7 @@ impl Default for LupaConfig {
             .map(|s| s.to_string())
             .collect(),
             max_file_size_bytes: 2 * 1024 * 1024,
-            max_structured_file_size_bytes: 25 * 1024 * 1024,
+            max_structured_file_size_bytes: 10 * 1024 * 1024,
             hash_small_file_threshold: 64 * 1024,
             threads: 0,
         }

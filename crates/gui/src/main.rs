@@ -404,7 +404,10 @@ impl LupaApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(!self.busy, egui::Button::new("Actualizar ndice"))
+                .add_enabled(
+                    !self.busy && !self.watch.running,
+                    egui::Button::new("Actualizar ndice"),
+                )
                 .clicked()
             {
                 self.spawn_build();

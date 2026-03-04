@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -123,7 +125,7 @@ impl LupaEngine {
     pub fn build_incremental(&self) -> Result<IndexStats> {
         let start = Instant::now();
         let (index, fields) = self.ensure_index()?;
-        let mut writer = index.writer(50_000_000)?;
+        let mut writer = self.acquire_writer_with_retry(&index)?;
 
         let mut store = MetadataStore::open(&self.db_path)?;
         let existing_records = store
@@ -143,6 +145,10 @@ impl LupaEngine {
                         .is_some_and(|p| p.mtime == s.mtime && p.size == s.size)
             })
             .count();
+        let scanned_set = snapshots
+            .iter()
+            .map(|s| s.path_str.clone())
+            .collect::<HashSet<_>>();
 
         let candidates = snapshots
             .into_iter()
@@ -155,10 +161,20 @@ impl LupaEngine {
             })
             .collect::<Vec<_>>();
 
-        let prepared = candidates
+        let prepared_results = candidates
             .par_iter()
-            .filter_map(|snapshot| self.prepare_doc(snapshot).transpose())
-            .collect::<Result<Vec<_>>>()?;
+            .map(|snapshot| self.prepare_doc(snapshot))
+            .collect::<Vec<_>>();
+
+        let mut errors = 0usize;
+        let mut prepared = Vec::new();
+        for result in prepared_results {
+            match result {
+                Ok(Some(doc)) => prepared.push(doc),
+                Ok(None) => {}
+                Err(_) => errors += 1,
+            }
+        }
 
         let mut indexed_new = 0usize;
         let mut indexed_updated = 0usize;
@@ -184,7 +200,6 @@ impl LupaEngine {
             upserts.push(prepared_doc.record);
         }
 
-        let scanned_set = self.collect_scanned_paths_set();
         let removed_paths = existing_records
             .keys()
             .filter(|p| !scanned_set.contains(*p))
@@ -209,7 +224,7 @@ impl LupaEngine {
             indexed_updated,
             skipped_unchanged,
             removed: removed_paths.len(),
-            errors: 0,
+            errors,
             duration_ms: start.elapsed().as_millis(),
         })
     }
@@ -351,9 +366,12 @@ impl LupaEngine {
                 return Ok((index, fields));
             }
 
-            // Schema viejo sin campos de búsqueda por nombre: recrear índice local.
+            // Schema viejo/incompatible: recrear índice local y resetear metadata incremental.
             std::fs::remove_dir_all(&self.index_dir)?;
             std::fs::create_dir_all(&self.index_dir)?;
+            if self.db_path.exists() {
+                let _ = std::fs::remove_file(&self.db_path);
+            }
         }
 
         let mut schema_builder = Schema::builder();
@@ -392,13 +410,6 @@ impl LupaEngine {
                 })
             })
             .collect()
-    }
-
-    fn collect_scanned_paths_set(&self) -> HashSet<String> {
-        self.walk_files()
-            .into_iter()
-            .map(|p| normalize_path(&p))
-            .collect::<HashSet<_>>()
     }
 
     fn walk_files(&self) -> Vec<PathBuf> {
@@ -495,6 +506,32 @@ impl LupaEngine {
         }
 
         Ok(String::new())
+    }
+
+    fn acquire_writer_with_retry(&self, index: &Index) -> Result<tantivy::IndexWriter> {
+        let mut last_err = None;
+        for attempt in 0..10 {
+            match index.writer(50_000_000) {
+                Ok(writer) => return Ok(writer),
+                Err(err) => {
+                    let msg = err.to_string();
+                    if msg.contains("LockBusy") || msg.contains("Failed to acquire index lock") {
+                        last_err = Some(err);
+                        let backoff_ms = 100 + (attempt * 100) as u64;
+                        thread::sleep(Duration::from_millis(backoff_ms));
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "No se pudo adquirir lock de índice tras reintentos: {}",
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "desconocido".to_string())
+        ))
     }
 }
 

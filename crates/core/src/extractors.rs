@@ -15,7 +15,19 @@ pub fn extract_docx_text(path: &Path) -> Result<String> {
     let mut xml_parts = (0..zip.len())
         .filter_map(|i| {
             let name = zip.by_index(i).ok()?.name().to_string();
-            let is_word_xml = name.starts_with("word/") && name.ends_with(".xml");
+            let is_word_xml = matches!(
+                name.as_str(),
+                "word/document.xml"
+                    | "word/footnotes.xml"
+                    | "word/endnotes.xml"
+                    | "word/comments.xml"
+                    | "word/header1.xml"
+                    | "word/header2.xml"
+                    | "word/header3.xml"
+                    | "word/footer1.xml"
+                    | "word/footer2.xml"
+                    | "word/footer3.xml"
+            );
             if is_word_xml {
                 Some(name)
             } else {

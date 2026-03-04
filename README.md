@@ -97,7 +97,7 @@ Si existe en la raíz del proyecto, se carga automáticamente.
 excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
 include_extensions = ["txt", "md", "log", "rs", "toml", "json", "js", "ts", "py", "sql"]
 max_file_size_bytes = 2097152
-max_structured_file_size_bytes = 26214400
+max_structured_file_size_bytes = 10485760
 hash_small_file_threshold = 65536
 threads = 0
 ```
