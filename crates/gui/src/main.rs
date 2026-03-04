@@ -442,8 +442,9 @@ impl LupaApp {
             .insert(path.to_string(), SnippetState::Loading);
         let tx = self.tx.clone();
         let path_owned = path.to_string();
+        let root = self.root.clone();
         std::thread::spawn(move || {
-            let result = load_snippet_data(&path_owned, &query);
+            let result = load_snippet_data(&root, &path_owned, &query);
             let _ = tx.send(UiEvent::SnippetLoaded {
                 path: path_owned,
                 result,
@@ -1630,6 +1631,28 @@ fn save_thumb_to_cache(thumb: &image::RgbaImage, cache_file: &Path) -> Result<()
         .map_err(|e| format!("no se pudo guardar thumb cache: {e}"))
 }
 
+fn snippet_cache_file(root: &str, source: &Path, query: &str) -> Option<PathBuf> {
+    let meta = fs::metadata(source).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.to_string_lossy().hash(&mut hasher);
+    mtime.hash(&mut hasher);
+    size.hash(&mut hasher);
+    query.to_lowercase().hash(&mut hasher);
+    let key = format!("{:016x}", hasher.finish());
+
+    let cache_dir = PathBuf::from(root).join(".lupa").join("snippet_cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    Some(cache_dir.join(format!("{key}.txt")))
+}
+
 fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
     let ext = extension_of(path);
     if !is_image_extension(&ext) {
@@ -1646,8 +1669,19 @@ fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
     })
 }
 
-fn load_snippet_data(path: &str, query: &str) -> Result<Option<String>, String> {
+fn load_snippet_data(root: &str, path: &str, query: &str) -> Result<Option<String>, String> {
     let p = Path::new(path);
+    if let Some(cache_file) = snippet_cache_file(root, p, query) {
+        if cache_file.exists() {
+            if let Ok(cached) = fs::read_to_string(&cache_file) {
+                if cached.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(cached));
+            }
+        }
+    }
+
     let ext = extension_of(path);
     let content = if matches!(
         ext.as_str(),
@@ -1691,9 +1725,16 @@ fn load_snippet_data(path: &str, query: &str) -> Result<Option<String>, String> 
     };
 
     if content.trim().is_empty() {
+        if let Some(cache_file) = snippet_cache_file(root, p, query) {
+            let _ = fs::write(cache_file, "");
+        }
         return Ok(None);
     }
-    Ok(Some(make_snippet(&content, query)))
+    let snippet = make_snippet(&content, query);
+    if let Some(cache_file) = snippet_cache_file(root, p, query) {
+        let _ = fs::write(cache_file, &snippet);
+    }
+    Ok(Some(snippet))
 }
 
 fn read_text_limited(path: &Path, max_bytes: usize) -> Result<String, String> {
