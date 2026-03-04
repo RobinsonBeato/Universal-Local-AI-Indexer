@@ -866,6 +866,13 @@ impl LupaApp {
                 self.selected_path = hits.first().map(|h| h.path.clone());
             }
 
+            // Warm up snippets for first visible/top results to improve perceived latency.
+            for hit in hits.iter().take(12) {
+                if hit.snippet.is_none() {
+                    self.request_snippet(&hit.path);
+                }
+            }
+
             // Virtualized rows: render only visible result cards for large hit sets.
             let row_height = 114.0;
             egui::ScrollArea::vertical()
