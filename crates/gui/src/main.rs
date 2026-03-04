@@ -609,10 +609,16 @@ impl LupaApp {
                     if ui.button("Abrir").clicked() {
                         let _ = open_file_path(Path::new(&preview.path));
                     }
+                    if ui.button("Abrir con...").clicked() {
+                        let _ = open_with_dialog(Path::new(&preview.path));
+                    }
                     if ui.button("Carpeta").clicked() {
                         if let Some(parent) = Path::new(&preview.path).parent() {
                             let _ = open_folder_path(parent);
                         }
+                    }
+                    if ui.button("Copiar ruta").clicked() {
+                        ui.ctx().copy_text(preview.path.clone());
                     }
                 });
             }
@@ -721,11 +727,19 @@ impl LupaApp {
                             action_clicked = true;
                             let _ = open_file_path(Path::new(&hit.path));
                         }
+                        if ui.button("Abrir con...").clicked() {
+                            action_clicked = true;
+                            let _ = open_with_dialog(Path::new(&hit.path));
+                        }
                         if ui.button("Carpeta").clicked() {
                             action_clicked = true;
                             if let Some(parent) = Path::new(&hit.path).parent() {
                                 let _ = open_folder_path(parent);
                             }
+                        }
+                        if ui.button("Copiar ruta").clicked() {
+                            action_clicked = true;
+                            ui.ctx().copy_text(hit.path.clone());
                         }
                         ui.label(RichText::new(format!("Score {:.2}", hit.score)).small());
                     });
@@ -819,6 +833,12 @@ impl LupaApp {
 impl eframe::App for LupaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+
+        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Enter)) {
+            if let Some(path) = self.selected_path.as_deref() {
+                let _ = open_file_path(Path::new(path));
+            }
+        }
 
         egui::TopBottomPanel::top("top_search")
             .frame(
@@ -1044,6 +1064,27 @@ fn open_folder_path(path: &Path) -> Result<(), String> {
 
     #[allow(unreachable_code)]
     Err("Plataforma no soportada para abrir carpetas".to_string())
+}
+
+fn open_with_dialog(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("rundll32.exe")
+            .args(["shell32.dll,OpenAs_RunDLL", &path.to_string_lossy()])
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "No se pudo abrir dialogo 'Abrir con' para {}: {e}",
+                    path.display()
+                )
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_file_path(path)
+    }
 }
 
 fn run_engine(root: &str) -> anyhow::Result<LupaEngine> {
