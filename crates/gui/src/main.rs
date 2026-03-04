@@ -89,6 +89,31 @@ struct WatchState {
     stop: Option<Arc<AtomicBool>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileFilter {
+    All,
+    Documents,
+    Pdf,
+    Images,
+    Code,
+    Media,
+    Other,
+}
+
+impl FileFilter {
+    fn label(self) -> &'static str {
+        match self {
+            FileFilter::All => "Todos",
+            FileFilter::Documents => "Documentos",
+            FileFilter::Pdf => "PDF",
+            FileFilter::Images => "Imagenes",
+            FileFilter::Code => "Codigo",
+            FileFilter::Media => "Audio/Video",
+            FileFilter::Other => "Otros",
+        }
+    }
+}
+
 struct LupaApp {
     root: String,
     query: String,
@@ -107,6 +132,7 @@ struct LupaApp {
     last_doctor: Option<DoctorReport>,
     thumbnails: HashMap<String, Thumbnail>,
     selected_path: Option<String>,
+    selected_filter: FileFilter,
     preview_cache: HashMap<String, PreviewData>,
 
     tx: Sender<UiEvent>,
@@ -159,6 +185,7 @@ impl LupaApp {
             last_doctor: None,
             thumbnails: HashMap::new(),
             selected_path: None,
+            selected_filter: FileFilter::All,
             preview_cache: HashMap::new(),
             tx,
             rx,
@@ -298,6 +325,7 @@ impl LupaApp {
                             );
                             self.logs.push(self.status.clone());
                             self.preview_cache.clear();
+                            self.selected_filter = FileFilter::All;
                             self.selected_path = result.hits.first().map(|h| h.path.clone());
                             self.last_search = Some(result);
                         }
@@ -453,6 +481,16 @@ impl LupaApp {
     }
 
     fn results_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let all_filters = [
+            FileFilter::All,
+            FileFilter::Documents,
+            FileFilter::Pdf,
+            FileFilter::Images,
+            FileFilter::Code,
+            FileFilter::Media,
+            FileFilter::Other,
+        ];
+
         ui.horizontal(|ui| {
             ui.heading("Resultados");
             if let Some(search) = &self.last_search {
@@ -466,13 +504,46 @@ impl LupaApp {
 
         ui.add_space(4.0);
 
+        if let Some(result) = &self.last_search {
+            ui.horizontal_wrapped(|ui| {
+                for filter in all_filters {
+                    let count = result
+                        .hits
+                        .iter()
+                        .filter(|h| matches_filter(&h.path, filter))
+                        .count();
+                    let text = format!("{} ({})", filter.label(), count);
+                    if ui
+                        .selectable_label(self.selected_filter == filter, text)
+                        .clicked()
+                    {
+                        self.selected_filter = filter;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             if let Some(result) = &self.last_search {
-                let hits = result.hits.clone();
-                if result.hits.is_empty() {
+                let hits = result
+                    .hits
+                    .iter()
+                    .filter(|h| matches_filter(&h.path, self.selected_filter))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if hits.is_empty() {
                     ui.add_space(20.0);
-                    ui.label("No hay resultados. Prob con otra palabra o actualiz el ndice.");
+                    ui.label("No hay resultados para este filtro.");
                     return;
+                }
+
+                let selected_missing = match self.selected_path.as_ref() {
+                    Some(p) => !hits.iter().any(|h| &h.path == p),
+                    None => true,
+                };
+                if selected_missing {
+                    self.selected_path = hits.first().map(|h| h.path.clone());
                 }
 
                 for (idx, hit) in hits.iter().enumerate() {
@@ -853,6 +924,61 @@ fn ext_color(ext: &str) -> Color32 {
         "mp3" | "wav" | "flac" => Color32::from_rgb(115, 120, 176),
         "mp4" | "mkv" | "mov" => Color32::from_rgb(120, 90, 145),
         _ => Color32::from_rgb(118, 110, 142),
+    }
+}
+
+fn extension_of(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default()
+}
+
+fn matches_filter(path: &str, filter: FileFilter) -> bool {
+    let ext = extension_of(path);
+    match filter {
+        FileFilter::All => true,
+        FileFilter::Pdf => ext == "pdf",
+        FileFilter::Images => is_image_extension(&ext),
+        FileFilter::Documents => matches!(
+            ext.as_str(),
+            "doc" | "docx" | "odt" | "rtf" | "txt" | "md" | "pdf"
+        ),
+        FileFilter::Code => matches!(
+            ext.as_str(),
+            "rs" | "js"
+                | "ts"
+                | "tsx"
+                | "jsx"
+                | "py"
+                | "java"
+                | "go"
+                | "cs"
+                | "cpp"
+                | "h"
+                | "hpp"
+                | "html"
+                | "css"
+                | "json"
+                | "toml"
+                | "yaml"
+                | "yml"
+                | "sql"
+                | "xml"
+                | "sh"
+                | "ps1"
+        ),
+        FileFilter::Media => matches!(
+            ext.as_str(),
+            "mp3" | "wav" | "flac" | "aac" | "ogg" | "mp4" | "mkv" | "mov" | "avi" | "webm"
+        ),
+        FileFilter::Other => {
+            !matches_filter(path, FileFilter::Documents)
+                && !matches_filter(path, FileFilter::Images)
+                && !matches_filter(path, FileFilter::Code)
+                && !matches_filter(path, FileFilter::Media)
+        }
     }
 }
 
