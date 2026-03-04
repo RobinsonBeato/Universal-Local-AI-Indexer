@@ -4,11 +4,14 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LupaConfig {
     pub excludes: Vec<String>,
     // Extensiones que se leerán como texto para full-text en contenido.
     pub include_extensions: Vec<String>,
     pub max_file_size_bytes: u64,
+    // Límite separado para formatos estructurados (pdf/docx), para no perder fragmentos.
+    pub max_structured_file_size_bytes: u64,
     pub hash_small_file_threshold: u64,
     pub threads: usize,
 }
@@ -35,6 +38,7 @@ impl Default for LupaConfig {
             .map(|s| s.to_string())
             .collect(),
             max_file_size_bytes: 2 * 1024 * 1024,
+            max_structured_file_size_bytes: 25 * 1024 * 1024,
             hash_small_file_threshold: 64 * 1024,
             threads: 0,
         }
@@ -83,6 +87,20 @@ impl LupaConfig {
 
     pub fn data_dir(project_root: &Path) -> PathBuf {
         project_root.join(".lupa")
+    }
+
+    pub fn allows_content_extract(&self, path: &Path, size: u64) -> bool {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if ext == "pdf" || ext == "docx" {
+            size <= self.max_structured_file_size_bytes
+        } else {
+            size <= self.max_file_size_bytes
+        }
     }
 }
 

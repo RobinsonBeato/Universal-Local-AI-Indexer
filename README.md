@@ -97,12 +97,14 @@ Si existe en la raíz del proyecto, se carga automáticamente.
 excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
 include_extensions = ["txt", "md", "log", "rs", "toml", "json", "js", "ts", "py", "sql"]
 max_file_size_bytes = 2097152
+max_structured_file_size_bytes = 26214400
 hash_small_file_threshold = 65536
 threads = 0
 ```
 
 - `threads = 0`: usa los núcleos disponibles.
 - `hash_small_file_threshold`: para archivos chicos calcula `xxhash` y evita reindexar si el contenido no cambió.
+- `max_structured_file_size_bytes`: límite para extraer texto de `pdf/docx` (subilo si faltan fragmentos en archivos grandes).
 
 ## Excludes por defecto (privacidad)
 

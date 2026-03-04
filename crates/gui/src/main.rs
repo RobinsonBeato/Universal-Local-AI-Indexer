@@ -9,7 +9,8 @@ use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
 use eframe::egui::{
-    self, Align, Color32, FontFamily, FontId, Key, RichText, Sense, Stroke, TextureHandle,
+    self, Align, Color32, CursorIcon, FontFamily, FontId, Key, RichText, Sense, Stroke,
+    TextureHandle,
 };
 use lupa_core::{
     DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions, SearchResult,
@@ -532,11 +533,11 @@ impl LupaApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Abrir").clicked() {
-                        let _ = open_path(Path::new(&preview.path));
+                        let _ = open_file_path(Path::new(&preview.path));
                     }
                     if ui.button("Carpeta").clicked() {
                         if let Some(parent) = Path::new(&preview.path).parent() {
-                            let _ = open_path(parent);
+                            let _ = open_folder_path(parent);
                         }
                     }
                 });
@@ -578,6 +579,7 @@ impl LupaApp {
         is_selected: bool,
     ) -> bool {
         let mut row_selected = false;
+        let mut action_clicked = false;
         let frame = egui::Frame::group(ui.style())
             .fill(if is_selected {
                 Color32::from_rgb(239, 233, 250)
@@ -595,7 +597,7 @@ impl LupaApp {
                 },
             ));
 
-        frame.show(ui, |ui| {
+        let row_response = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 self.paint_thumbnail(ui, ctx, &hit.path);
 
@@ -619,7 +621,7 @@ impl LupaApp {
                             }
 
                             if response.double_clicked() {
-                                let _ = open_path(Path::new(&hit.path));
+                                let _ = open_file_path(Path::new(&hit.path));
                             }
                         });
                     });
@@ -642,11 +644,13 @@ impl LupaApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui.button("Abrir").clicked() {
-                            let _ = open_path(Path::new(&hit.path));
+                            action_clicked = true;
+                            let _ = open_file_path(Path::new(&hit.path));
                         }
                         if ui.button("Carpeta").clicked() {
+                            action_clicked = true;
                             if let Some(parent) = Path::new(&hit.path).parent() {
-                                let _ = open_path(parent);
+                                let _ = open_folder_path(parent);
                             }
                         }
                         ui.label(RichText::new(format!("Score {:.2}", hit.score)).small());
@@ -654,6 +658,15 @@ impl LupaApp {
                 });
             });
         });
+
+        let row_response = row_response.response;
+        if row_response.hovered() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        let row_primary_click = row_response.hovered() && ui.input(|i| i.pointer.primary_clicked());
+        if row_primary_click && !action_clicked {
+            row_selected = true;
+        }
 
         row_selected
     }
@@ -840,7 +853,7 @@ fn ext_color(ext: &str) -> Color32 {
     }
 }
 
-fn open_path(path: &Path) -> Result<(), String> {
+fn open_file_path(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
@@ -870,6 +883,38 @@ fn open_path(path: &Path) -> Result<(), String> {
 
     #[allow(unreachable_code)]
     Err("Plataforma no soportada para abrir archivos".to_string())
+}
+
+fn open_folder_path(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("No se pudo abrir carpeta {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("No se pudo abrir carpeta {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("No se pudo abrir carpeta {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Plataforma no soportada para abrir carpetas".to_string())
 }
 
 fn run_engine(root: &str) -> anyhow::Result<LupaEngine> {

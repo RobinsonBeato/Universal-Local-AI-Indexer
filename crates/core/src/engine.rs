@@ -417,7 +417,10 @@ impl LupaEngine {
             }
         }
 
-        if snapshot.size <= self.config.max_file_size_bytes {
+        if self
+            .config
+            .allows_content_extract(&snapshot.path, snapshot.size)
+        {
             content = self.extract_indexable_content(&snapshot.path, preloaded_bytes.as_deref())?;
         }
 
