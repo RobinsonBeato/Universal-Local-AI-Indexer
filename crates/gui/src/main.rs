@@ -1267,6 +1267,27 @@ impl LupaApp {
             Sense::click(),
         );
 
+        response.context_menu(|ui| {
+            if ui.button("Open").clicked() {
+                let _ = open_file_path(Path::new(&hit.path));
+                ui.close_menu();
+            }
+            if ui.button("Open with...").clicked() {
+                let _ = open_with_dialog(Path::new(&hit.path));
+                ui.close_menu();
+            }
+            if ui.button("Open folder").clicked() {
+                if let Some(parent) = Path::new(&hit.path).parent() {
+                    let _ = open_folder_path(parent);
+                }
+                ui.close_menu();
+            }
+            if ui.button("Copy path").clicked() {
+                ui.ctx().copy_text(hit.path.clone());
+                ui.close_menu();
+            }
+        });
+
         if response.hovered() {
             ctx.set_cursor_icon(CursorIcon::PointingHand);
         }
@@ -1353,9 +1374,37 @@ impl eframe::App for LupaApp {
             .frame(egui::Frame::none().fill(bg_color))
             .show(ctx, |_| {});
 
-        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Enter)) {
-            if let Some(path) = self.selected_path.as_deref() {
-                let _ = open_file_path(Path::new(path));
+        if !ctx.wants_keyboard_input() {
+            let go_up = ctx.input(|i| i.key_pressed(Key::ArrowUp));
+            let go_down = ctx.input(|i| i.key_pressed(Key::ArrowDown));
+            if go_up || go_down {
+                if let Some(search) = &self.last_search {
+                    let filtered_paths = search
+                        .hits
+                        .iter()
+                        .filter(|h| matches_filter(&h.path, self.selected_filter))
+                        .map(|h| h.path.as_str())
+                        .collect::<Vec<_>>();
+                    if !filtered_paths.is_empty() {
+                        let current_idx = self
+                            .selected_path
+                            .as_deref()
+                            .and_then(|p| filtered_paths.iter().position(|v| *v == p))
+                            .unwrap_or(0);
+                        let next_idx = if go_down {
+                            (current_idx + 1).min(filtered_paths.len().saturating_sub(1))
+                        } else {
+                            current_idx.saturating_sub(1)
+                        };
+                        self.selected_path = Some(filtered_paths[next_idx].to_string());
+                    }
+                }
+            }
+
+            if ctx.input(|i| i.key_pressed(Key::Enter)) {
+                if let Some(path) = self.selected_path.as_deref() {
+                    let _ = open_file_path(Path::new(path));
+                }
             }
         }
 
@@ -1428,18 +1477,48 @@ impl eframe::App for LupaApp {
             )
             .show(ctx, |ui| {
                 self.results_panel(ui, ctx);
+            });
 
-                // Floating status toast if needed could go here
-                if !self.status.is_empty() && !self.busy {
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
-                        ui.add_space(10.0);
-                        egui::Frame::popup(ui.style())
-                            .fill(Color32::from_rgb(30, 30, 45))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(&self.status).small());
-                            });
-                    });
-                }
+        egui::TopBottomPanel::bottom("status_bar")
+            .exact_height(28.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 17, 25))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(30, 30, 45)))
+                    .inner_margin(egui::Margin::symmetric(10.0, 4.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let hits = self
+                        .last_search
+                        .as_ref()
+                        .map(|s| s.total_hits.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let search_ms = self
+                        .last_search
+                        .as_ref()
+                        .map(|s| format!("{}ms", s.took_ms))
+                        .unwrap_or_else(|| "-".to_string());
+                    let index_ms = self
+                        .last_build
+                        .as_ref()
+                        .map(|s| format!("{}ms", s.duration_ms))
+                        .unwrap_or_else(|| "-".to_string());
+                    let watch_state = if self.watch.running {
+                        "Watch: ON"
+                    } else {
+                        "Watch: OFF"
+                    };
+                    ui.label(RichText::new(format!("hits: {hits}")).small());
+                    ui.separator();
+                    ui.label(RichText::new(format!("search: {search_ms}")).small());
+                    ui.separator();
+                    ui.label(RichText::new(format!("index: {index_ms}")).small());
+                    ui.separator();
+                    ui.label(RichText::new(watch_state).small());
+                    ui.separator();
+                    ui.label(RichText::new(&self.status).small());
+                });
             });
 
         ctx.request_repaint_after(Duration::from_millis(120));
