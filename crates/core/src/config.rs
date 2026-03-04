@@ -1,4 +1,4 @@
-﻿use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -25,8 +25,9 @@ impl Default for LupaConfig {
                 "System32".to_string(),
             ],
             include_extensions: vec![
-                "txt", "md", "log", "rs", "toml", "json", "yaml", "yml", "js", "ts", "tsx", "jsx", "py", "java",
-                "go", "cs", "cpp", "h", "hpp", "html", "css", "sh", "ps1", "sql", "xml", "ini",
+                "txt", "md", "log", "rs", "toml", "json", "yaml", "yml", "js", "ts", "tsx", "jsx",
+                "py", "java", "go", "cs", "cpp", "h", "hpp", "html", "css", "sh", "ps1", "sql",
+                "xml", "ini",
             ]
             .into_iter()
             .map(|s| s.to_string())
@@ -91,7 +92,15 @@ mod tests {
     #[test]
     fn default_excludes_match_required_paths() {
         let cfg = LupaConfig::default();
-        for p in ["node_modules", ".git", "target", "AppData", "Program Files", "Windows", "System32"] {
+        for p in [
+            "node_modules",
+            ".git",
+            "target",
+            "AppData",
+            "Program Files",
+            "Windows",
+            "System32",
+        ] {
             assert!(cfg.should_exclude(Path::new(p)));
         }
     }

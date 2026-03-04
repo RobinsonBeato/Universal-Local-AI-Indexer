@@ -7,7 +7,9 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 num_cpus.workspace = true
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 lupa-core = { path = "../core" }

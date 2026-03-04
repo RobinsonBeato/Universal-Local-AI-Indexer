@@ -1,4 +1,4 @@
-﻿use std::path::Path;
+use std::path::Path;
 
 use anyhow::Result;
 use rusqlite::{params, Connection};
@@ -74,7 +74,13 @@ impl MetadataStore {
                  indexed_at = excluded.indexed_at",
             )?;
             for rec in records {
-                stmt.execute(params![rec.path, rec.mtime, rec.size, rec.hash, rec.indexed_at])?;
+                stmt.execute(params![
+                    rec.path,
+                    rec.mtime,
+                    rec.size,
+                    rec.hash,
+                    rec.indexed_at
+                ])?;
             }
         }
         tx.commit()?;

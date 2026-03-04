@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -130,7 +130,15 @@ impl LupaEngine {
 
         let snapshots = self.collect_snapshots(&existing_records);
         let scanned = snapshots.len();
-        let skipped_unchanged = snapshots.iter().filter(|s| s.prev.is_some() && s.prev.as_ref().is_some_and(|p| p.mtime == s.mtime && p.size == s.size)).count();
+        let skipped_unchanged = snapshots
+            .iter()
+            .filter(|s| {
+                s.prev.is_some()
+                    && s.prev
+                        .as_ref()
+                        .is_some_and(|p| p.mtime == s.mtime && p.size == s.size)
+            })
+            .count();
 
         let candidates = snapshots
             .into_iter()
@@ -152,7 +160,10 @@ impl LupaEngine {
         let mut indexed_updated = 0usize;
         let mut upserts = Vec::new();
         for prepared_doc in prepared {
-            writer.delete_term(Term::from_field_text(fields.path, &prepared_doc.record.path));
+            writer.delete_term(Term::from_field_text(
+                fields.path,
+                &prepared_doc.record.path,
+            ));
             let doc = doc!(
                 fields.path => prepared_doc.record.path.clone(),
                 fields.content => prepared_doc.content
@@ -215,7 +226,9 @@ impl LupaEngine {
         let top_docs = searcher.search(&q, &TopDocs::with_limit(oversample))?;
 
         let regex = match &opts.regex {
-            Some(pattern) => Some(Regex::new(pattern).with_context(|| format!("regex inválida: {pattern}"))?),
+            Some(pattern) => {
+                Some(Regex::new(pattern).with_context(|| format!("regex inválida: {pattern}"))?)
+            }
             None => None,
         };
 
@@ -252,7 +265,11 @@ impl LupaEngine {
                 None
             };
 
-            hits.push(SearchHit { path, score, snippet });
+            hits.push(SearchHit {
+                path,
+                score,
+                snippet,
+            });
             if hits.len() >= opts.limit {
                 break;
             }
@@ -320,7 +337,10 @@ impl LupaEngine {
         Ok((index, resolve_fields(&schema)?))
     }
 
-    fn collect_snapshots(&self, existing_records: &HashMap<String, FileRecord>) -> Vec<FileSnapshot> {
+    fn collect_snapshots(
+        &self,
+        existing_records: &HashMap<String, FileRecord>,
+    ) -> Vec<FileSnapshot> {
         self.walk_files()
             .into_iter()
             .filter_map(|path| {
@@ -447,7 +467,8 @@ mod tests {
         std::fs::write(root.join("hello.txt"), "hello from lupa index")
             .expect("should write fixture file for indexing");
 
-        let cfg = LupaConfig::default();
+        let mut cfg = LupaConfig::default();
+        cfg.excludes.clear();
         let engine = LupaEngine::new(root.clone(), cfg).expect("should create engine");
         let stats = engine
             .build_incremental()

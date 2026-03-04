@@ -25,7 +25,10 @@ venv/
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock se versiona para aplicaciones CLI
+
+# Lupa runtime data (local index + metadata)
+.lupa/
 
 # Visual Studio Code
 .vscode/
