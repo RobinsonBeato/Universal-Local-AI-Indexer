@@ -1,0 +1,83 @@
+# Node.js
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+env/
+venv/
+.venv/
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Visual Studio Code
+.vscode/
+.history/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Coverage
+coverage/
+*.lcov
+
+# Build directories
+build/
+
+# Dependency directories
+bower_components/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Editors
+*.sublime-workspace
+*.sublime-project
+*.idea/
+
+# Lock files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+*.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Python eggs
+*.egg
+*.egg-info/
+dist/
+build/
+
+# JetBrains
+.idea/
+
+# AGENTS markdown
+AGENTS.md
