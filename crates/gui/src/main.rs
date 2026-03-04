@@ -41,19 +41,20 @@ fn apply_style(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(12.0, 8.0);
     style.spacing.menu_margin = egui::Margin::same(10.0);
+    style.spacing.window_margin = egui::Margin::same(12.0);
 
     style.text_styles = [
         (
             egui::TextStyle::Heading,
-            FontId::new(30.0, FontFamily::Proportional),
+            FontId::new(32.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Body,
-            FontId::new(17.0, FontFamily::Proportional),
+            FontId::new(16.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Button,
-            FontId::new(16.0, FontFamily::Proportional),
+            FontId::new(15.0, FontFamily::Proportional),
         ),
         (
             egui::TextStyle::Monospace,
@@ -66,19 +67,34 @@ fn apply_style(ctx: &egui::Context) {
     ]
     .into();
 
-    let mut visuals = egui::Visuals::light();
-    visuals.panel_fill = Color32::from_rgb(243, 241, 248);
-    visuals.window_fill = Color32::from_rgb(243, 241, 248);
-    visuals.extreme_bg_color = Color32::from_rgb(255, 255, 255);
+    // Dark palette with purple accents to match the requested style.
+    let mut visuals = egui::Visuals::dark();
+    visuals.panel_fill = Color32::from_rgb(20, 20, 27);
+    visuals.window_fill = Color32::from_rgb(20, 20, 27);
+    visuals.extreme_bg_color = Color32::from_rgb(16, 16, 22);
 
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(236, 232, 246);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(227, 222, 240);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(210, 204, 227);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(188, 182, 208);
+    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(34, 34, 44);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(62, 60, 78));
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(223, 223, 232));
+    visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(43, 43, 58);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(81, 76, 112));
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(225, 225, 225));
+    visuals.widgets.inactive.rounding = egui::Rounding::same(8.0);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 55, 82);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(128, 110, 186));
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(240, 240, 240));
+    visuals.widgets.hovered.rounding = egui::Rounding::same(8.0);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(124, 74, 227);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, Color32::from_rgb(175, 138, 255));
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::from_rgb(247, 247, 247));
+    visuals.widgets.active.rounding = egui::Rounding::same(8.0);
 
-    visuals.selection.bg_fill = Color32::from_rgb(116, 108, 144);
-    visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
-    visuals.override_text_color = Some(Color32::from_rgb(34, 30, 50));
+    visuals.selection.bg_fill = Color32::from_rgb(124, 74, 227);
+    visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(175, 138, 255));
+    visuals.override_text_color = Some(Color32::from_rgb(222, 222, 222));
+    visuals.window_rounding = egui::Rounding::same(8.0);
+    visuals.menu_rounding = egui::Rounding::same(8.0);
 
     style.visuals = visuals;
     ctx.set_style(style);
@@ -98,21 +114,6 @@ enum FileFilter {
     Images,
     Code,
     Media,
-    Other,
-}
-
-impl FileFilter {
-    fn label(self) -> &'static str {
-        match self {
-            FileFilter::All => "Todos",
-            FileFilter::Documents => "Documentos",
-            FileFilter::Pdf => "PDF",
-            FileFilter::Images => "Imagenes",
-            FileFilter::Code => "Codigo",
-            FileFilter::Media => "Audio/Video",
-            FileFilter::Other => "Otros",
-        }
-    }
 }
 
 struct LupaApp {
@@ -148,10 +149,6 @@ enum Thumbnail {
 struct PreviewData {
     path: String,
     name: String,
-    ext: String,
-    size_bytes: u64,
-    modified_unix: u64,
-    image: Option<TextureHandle>, // only reused image thumbnail texture
 }
 
 enum UiEvent {
@@ -433,62 +430,58 @@ impl LupaApp {
     fn top_search_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("LUPA")
-                    .size(34.0)
-                    .strong()
-                    .color(Color32::from_rgb(100, 90, 128)),
+                RichText::new("Q")
+                    .size(30.0)
+                    .color(Color32::from_rgb(155, 96, 255)),
             );
-            ui.add_space(8.0);
-            ui.label(RichText::new("Buscador local ultrarrpido").size(16.0));
+            ui.label(RichText::new("LUPA").size(38.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new("Offline | Privado | Ultra rapido").small());
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(if self.watch.running {
+                        "Monitor ON"
+                    } else {
+                        "Monitor OFF"
+                    })
+                    .small()
+                    .color(if self.watch.running {
+                        Color32::from_rgb(160, 236, 200)
+                    } else {
+                        Color32::from_rgb(255, 196, 196)
+                    }),
+                );
+            });
         });
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let search_box = egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Buscar documentos, notas, cdigo, logs...")
-                .desired_width(f32::INFINITY);
-
-            let response = ui.add_sized([ui.available_width() - 130.0, 42.0], search_box);
-            let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-
-            let search_button = ui.add_enabled(
-                !self.busy && !self.query.trim().is_empty(),
-                egui::Button::new(RichText::new("Buscar").size(18.0).strong()),
+            let search_w = (ui.available_width() - 140.0).max(220.0);
+            let response = ui.add_sized(
+                [search_w, 48.0],
+                egui::TextEdit::singleline(&mut self.query)
+                    .hint_text("Buscar archivos en segundos...")
+                    .desired_width(search_w),
             );
-
-            if search_button.clicked() || pressed_enter {
+            let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            if ui
+                .add_enabled(
+                    !self.busy && !self.query.trim().is_empty(),
+                    egui::Button::new(RichText::new("BUSCAR").strong().size(18.0)),
+                )
+                .clicked()
+                || pressed_enter
+            {
                 self.spawn_search();
             }
         });
 
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(&self.status)
-                .small()
-                .color(Color32::from_rgb(70, 65, 90)),
-        );
-    }
-
-    fn control_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Panel rpido");
-        ui.add_space(4.0);
-
-        ui.label("Carpeta principal");
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.root);
-            if ui.button("Elegir").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.root = path.display().to_string();
-                }
-            }
-        });
-
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
                     !self.busy && !self.watch.running,
-                    egui::Button::new("Actualizar ndice"),
+                    egui::Button::new("Indexar"),
                 )
                 .clicked()
             {
@@ -496,87 +489,119 @@ impl LupaApp {
             }
             if !self.watch.running {
                 if ui
-                    .add_enabled(!self.busy, egui::Button::new("Iniciar monitor"))
+                    .add_enabled(!self.busy, egui::Button::new("Monitor"))
                     .clicked()
                 {
                     self.start_watch();
                 }
-            } else if ui.button("Detener monitor").clicked() {
+            } else if ui.button("Detener").clicked() {
                 self.stop_watch();
+            }
+            if ui
+                .add_enabled(!self.busy, egui::Button::new("Doctor"))
+                .clicked()
+            {
+                self.spawn_doctor();
             }
         });
 
-        if ui
-            .add_enabled(!self.busy, egui::Button::new("Revisar sistema"))
-            .clicked()
-        {
-            self.spawn_doctor();
-        }
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(&self.status)
+                .small()
+                .color(Color32::from_rgb(180, 180, 202)),
+        );
+    }
 
-        ui.separator();
-        ui.label(RichText::new("Opciones de bsqueda").strong());
-        ui.add(egui::Slider::new(&mut self.limit, 5..=200).text("Resultados"));
-        ui.text_edit_singleline(&mut self.path_prefix)
-            .on_hover_text("Filtrar por ruta, por ejemplo: C:/Users/tu_usuario/Documents");
-        ui.text_edit_singleline(&mut self.regex)
-            .on_hover_text("Filtro regex opcional sobre path + contenido");
-        ui.checkbox(&mut self.highlight, "Mostrar fragmento de texto");
+    fn control_panel(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.label(
+                RichText::new("RECIENTES")
+                    .small()
+                    .strong()
+                    .color(Color32::from_rgb(150, 150, 170)),
+            );
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::All, "Recientes")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::All;
+            }
 
-        ui.separator();
-        if let Some(stats) = &self.last_build {
-            ui.label(RichText::new("ltima indexacin").strong());
-            ui.monospace(format!("Analizados: {}", stats.scanned));
-            ui.monospace(format!("Nuevos: {}", stats.indexed_new));
-            ui.monospace(format!("Actualizados: {}", stats.indexed_updated));
-            ui.monospace(format!("Sin cambios: {}", stats.skipped_unchanged));
-            ui.monospace(format!("Eliminados: {}", stats.removed));
-            ui.monospace(format!("Tiempo: {} ms", stats.duration_ms));
-        }
+            ui.add_space(16.0);
+            ui.label(
+                RichText::new("CATEGORIAS")
+                    .small()
+                    .strong()
+                    .color(Color32::from_rgb(150, 150, 170)),
+            );
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::Documents, "Documentos")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::Documents;
+            }
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::Images, "Imagenes")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::Images;
+            }
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::Media, "Videos / Audio")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::Media;
+            }
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::Code, "Codigo")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::Code;
+            }
+            if ui
+                .selectable_label(self.selected_filter == FileFilter::Pdf, "PDF")
+                .clicked()
+            {
+                self.selected_filter = FileFilter::Pdf;
+            }
+
+            ui.add_space(18.0);
+            ui.label(
+                RichText::new("CARPETA BASE")
+                    .small()
+                    .strong()
+                    .color(Color32::from_rgb(150, 150, 170)),
+            );
+            ui.add_sized(
+                [ui.available_width(), 30.0],
+                egui::TextEdit::singleline(&mut self.root),
+            );
+            if ui.button("Elegir carpeta").clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    self.root = path.display().to_string();
+                }
+            }
+        });
     }
 
     fn results_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let all_filters = [
-            FileFilter::All,
-            FileFilter::Documents,
-            FileFilter::Pdf,
-            FileFilter::Images,
-            FileFilter::Code,
-            FileFilter::Media,
-            FileFilter::Other,
-        ];
-
         ui.horizontal(|ui| {
             ui.heading("Resultados");
             if let Some(search) = &self.last_search {
                 ui.label(
                     RichText::new(format!("{} encontrados", search.total_hits))
-                        .color(Color32::from_rgb(84, 76, 108)),
+                        .color(Color32::from_rgb(177, 171, 214)),
                 );
-                ui.label(RichText::new(format!("{} ms", search.took_ms)).small());
+                ui.label(
+                    RichText::new(format!("{} ms", search.took_ms))
+                        .small()
+                        .color(Color32::from_rgb(177, 171, 214)),
+                );
             }
         });
 
-        ui.add_space(4.0);
-
-        if let Some(result) = &self.last_search {
-            ui.horizontal_wrapped(|ui| {
-                for filter in all_filters {
-                    let count = result
-                        .hits
-                        .iter()
-                        .filter(|h| matches_filter(&h.path, filter))
-                        .count();
-                    let text = format!("{} ({})", filter.label(), count);
-                    if ui
-                        .selectable_label(self.selected_filter == filter, text)
-                        .clicked()
-                    {
-                        self.selected_filter = filter;
-                    }
-                }
-            });
-            ui.add_space(4.0);
-        }
+        ui.add_space(8.0);
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             if let Some(result) = &self.last_search {
@@ -605,103 +630,94 @@ impl LupaApp {
                     if self.result_row(ui, ctx, idx + 1, hit, is_selected) {
                         self.selected_path = Some(hit.path.clone());
                     }
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                 }
             } else {
                 ui.add_space(20.0);
-                ui.label("Escrib algo en la barra superior y presion Buscar.");
+                ui.label("Escribe algo en la barra superior y presiona Buscar.");
             }
         });
     }
 
     fn right_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("Vista previa");
-        ui.separator();
+        ui.heading("FILTROS");
+        ui.add_space(6.0);
 
+        ui.label("Tipo");
+        ui.add_sized(
+            [ui.available_width(), 30.0],
+            egui::TextEdit::singleline(&mut self.regex).hint_text("pdf|docx|png|rs"),
+        );
+        ui.add_space(6.0);
+        ui.label("Path");
+        ui.add_sized(
+            [ui.available_width(), 30.0],
+            egui::TextEdit::singleline(&mut self.path_prefix).hint_text("C:/Users/..."),
+        );
+        ui.add_space(6.0);
+        ui.label("Cantidad");
+        ui.add(egui::Slider::new(&mut self.limit, 5..=200).text("Resultados"));
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.highlight, "");
+            ui.label("Mostrar fragmentos");
+        });
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("ESTADISTICAS")
+                .small()
+                .strong()
+                .color(Color32::from_rgb(150, 150, 170)),
+        );
+        if let Some(stats) = &self.last_build {
+            ui.label(format!("{} archivos indexados", stats.scanned));
+            ui.label(format!("{} ms indexacion", stats.duration_ms));
+        } else {
+            ui.label("Sin indexacion reciente");
+        }
+        if let Some(search) = &self.last_search {
+            ui.label(format!("{} resultados", search.total_hits));
+            ui.label(format!("{} ms busqueda", search.took_ms));
+        } else {
+            ui.label("Sin busquedas recientes");
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("SELECCION")
+                .small()
+                .strong()
+                .color(Color32::from_rgb(150, 150, 170)),
+        );
         if let Some(path) = self.selected_path.clone() {
-            let selected_hit = self.selected_hit();
             if !self.preview_cache.contains_key(&path) {
                 let preview = self.load_preview_data_fast(ctx, &path);
                 self.preview_cache.insert(path.clone(), preview);
             }
-
             if let Some(preview) = self.preview_cache.get(&path) {
                 ui.label(RichText::new(&preview.name).strong());
-                ui.label(RichText::new(&preview.path).small());
-                ui.add_space(6.0);
-                ui.label(format!("tipo: {}", preview.ext));
-                ui.label(format!("tamano: {} bytes", preview.size_bytes));
-                ui.label(format!("modificado: {}", preview.modified_unix));
-                ui.add_space(8.0);
-
-                if let Some(image) = &preview.image {
-                    let size = image.size_vec2();
-                    let max_w = ui.available_width().max(120.0);
-                    let scale = (max_w / size.x).min(280.0 / size.y).min(1.0);
-                    ui.image((image.id(), size * scale));
-                    ui.add_space(8.0);
-                }
-
-                if let Some(hit) = selected_hit {
-                    if let Some(text) = &hit.snippet {
-                        ui.label(RichText::new("Fragmento").strong());
-                        egui::ScrollArea::vertical()
-                            .max_height(260.0)
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(text).small());
-                            });
-                    } else {
-                        ui.label("No hay fragmento disponible para este resultado.");
-                    }
-                } else {
-                    ui.label(RichText::new("Fragmento").strong());
-                    ui.label("Selecciona un resultado para ver contexto.");
-                }
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.add(egui::Label::new(RichText::new(&preview.path).small()).wrap());
+                ui.horizontal_wrapped(|ui| {
                     if ui.button("Abrir").clicked() {
                         let _ = open_file_path(Path::new(&preview.path));
-                    }
-                    if ui.button("Abrir con...").clicked() {
-                        let _ = open_with_dialog(Path::new(&preview.path));
                     }
                     if ui.button("Carpeta").clicked() {
                         if let Some(parent) = Path::new(&preview.path).parent() {
                             let _ = open_folder_path(parent);
                         }
                     }
-                    if ui.button("Copiar ruta").clicked() {
+                    if ui.button("Copiar").clicked() {
                         ui.ctx().copy_text(preview.path.clone());
                     }
                 });
             }
         } else {
-            ui.label("Selecciona un resultado para ver preview.");
+            ui.label("Selecciona un resultado.");
         }
-
-        ui.separator();
-        ui.collapsing("Actividad", |ui| {
-            if let Some(doctor) = &self.last_doctor {
-                ui.label(RichText::new("Estado del sistema").strong());
-                for check in &doctor.checks {
-                    ui.label(check);
-                }
-                ui.add_space(8.0);
-            }
-
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for line in self.logs.iter().rev() {
-                    ui.label(RichText::new(line).small());
-                }
-            });
-        });
-    }
-
-    fn selected_hit(&self) -> Option<SearchHit> {
-        let path = self.selected_path.as_ref()?;
-        let result = self.last_search.as_ref()?;
-        result.hits.iter().find(|h| &h.path == path).cloned()
     }
 
     fn result_row(
@@ -714,26 +730,28 @@ impl LupaApp {
     ) -> bool {
         let mut row_selected = false;
         let mut action_clicked = false;
+        let (ext, size_label, time_label) = file_meta_labels(&hit.path);
         let frame = egui::Frame::group(ui.style())
             .fill(if is_selected {
-                Color32::from_rgb(239, 233, 250)
+                Color32::from_rgb(48, 41, 74)
             } else {
-                Color32::WHITE
+                Color32::from_rgb(33, 33, 43)
             })
-            .rounding(egui::Rounding::same(12.0))
-            .inner_margin(egui::Margin::same(12.0))
+            .rounding(egui::Rounding::same(14.0))
+            .inner_margin(egui::Margin::same(10.0))
             .stroke(Stroke::new(
                 1.0,
                 if is_selected {
-                    Color32::from_rgb(160, 140, 200)
+                    Color32::from_rgb(152, 112, 255)
                 } else {
-                    Color32::from_rgb(215, 209, 232)
+                    Color32::from_rgb(69, 63, 97)
                 },
             ));
 
         let row_response = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 self.paint_thumbnail(ui, ctx, &hit.path);
+                ui.add_space(4.0);
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
@@ -741,14 +759,14 @@ impl LupaApp {
                             ui.label(
                                 RichText::new(format!("{:02}", rank))
                                     .strong()
-                                    .color(Color32::from_rgb(110, 101, 140)),
+                                    .color(Color32::from_rgb(160, 145, 232)),
                             );
 
                             let name = file_name_from_path(&hit.path);
                             let title = RichText::new(name)
-                                .size(17.0)
+                                .size(20.0)
                                 .strong()
-                                .color(Color32::from_rgb(36, 30, 52));
+                                .color(Color32::from_rgb(236, 230, 255));
                             let response = ui.add(egui::Label::new(title).sense(Sense::click()));
                             if response.clicked() {
                                 row_selected = true;
@@ -760,42 +778,46 @@ impl LupaApp {
                         });
                     });
 
-                    ui.label(
-                        RichText::new(&hit.path)
-                            .small()
-                            .color(Color32::from_rgb(88, 82, 110)),
-                    );
-
-                    if let Some(snippet) = &hit.snippet {
-                        ui.add_space(2.0);
-                        ui.label(
-                            RichText::new(snippet)
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&hit.path)
                                 .small()
-                                .color(Color32::from_rgb(66, 62, 84)),
-                        );
-                    }
+                                .color(Color32::from_rgb(179, 179, 199)),
+                        )
+                        .wrap(),
+                    );
 
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Abrir").clicked() {
+                        ui.label(
+                            RichText::new(ext)
+                                .small()
+                                .color(Color32::from_rgb(196, 186, 230)),
+                        );
+                        ui.add_space(10.0);
+                        ui.label(RichText::new(size_label).small());
+                        ui.add_space(10.0);
+                        ui.label(RichText::new(time_label).small());
+                        ui.add_space(10.0);
+
+                        if ui.small_button("Abrir").clicked() {
                             action_clicked = true;
                             let _ = open_file_path(Path::new(&hit.path));
                         }
-                        if ui.button("Abrir con...").clicked() {
+                        if ui.small_button("Con...").clicked() {
                             action_clicked = true;
                             let _ = open_with_dialog(Path::new(&hit.path));
                         }
-                        if ui.button("Carpeta").clicked() {
+                        if ui.small_button("Dir").clicked() {
                             action_clicked = true;
                             if let Some(parent) = Path::new(&hit.path).parent() {
                                 let _ = open_folder_path(parent);
                             }
                         }
-                        if ui.button("Copiar ruta").clicked() {
+                        if ui.small_button("Copiar").clicked() {
                             action_clicked = true;
                             ui.ctx().copy_text(hit.path.clone());
                         }
-                        ui.label(RichText::new(format!("Score {:.2}", hit.score)).small());
                     });
                 });
             });
@@ -821,7 +843,7 @@ impl LupaApp {
             }
             Thumbnail::Badge { label, color } => {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
-                ui.painter().rect_filled(rect, 10.0, *color);
+                ui.painter().rect_filled(rect, 14.0, *color);
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -843,43 +865,12 @@ impl LupaApp {
             .expect("thumbnail should exist after insertion")
     }
 
-    fn load_preview_data_fast(&mut self, ctx: &egui::Context, path: &str) -> PreviewData {
-        let p = Path::new(path);
-        let ext = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_lowercase())
-            .unwrap_or_else(|| "file".to_string());
+    fn load_preview_data_fast(&mut self, _ctx: &egui::Context, path: &str) -> PreviewData {
         let name = file_name_from_path(path);
-
-        let mut size_bytes = 0u64;
-        let mut modified_unix = 0u64;
-        if let Ok(meta) = fs::metadata(p) {
-            size_bytes = meta.len();
-            if let Ok(modified) = meta.modified() {
-                modified_unix = modified
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-            }
-        }
-
-        let image = if is_image_extension(&ext) {
-            match self.thumbnail_for_path(ctx, path) {
-                Thumbnail::Image(tex) => Some(tex.clone()),
-                Thumbnail::Badge { .. } => None,
-            }
-        } else {
-            None
-        };
 
         PreviewData {
             path: path.to_string(),
             name,
-            ext,
-            size_bytes,
-            modified_unix,
-            image,
         }
     }
 }
@@ -887,6 +878,11 @@ impl LupaApp {
 impl eframe::App for LupaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+        let win_width = ctx.screen_rect().width();
+        let compact = win_width < 1220.0;
+        let show_right_panel = win_width >= 1040.0;
+        let left_width = if compact { 250.0 } else { 300.0 };
+        let right_width = if compact { 260.0 } else { 290.0 };
 
         if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Enter)) {
             if let Some(path) = self.selected_path.as_deref() {
@@ -897,7 +893,8 @@ impl eframe::App for LupaApp {
         egui::TopBottomPanel::top("top_search")
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(233, 228, 244))
+                    .fill(Color32::from_rgb(37, 37, 38))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
                     .inner_margin(egui::Margin::same(16.0)),
             )
             .show(ctx, |ui| {
@@ -906,32 +903,53 @@ impl eframe::App for LupaApp {
 
         egui::SidePanel::left("controls")
             .resizable(true)
-            .default_width(310.0)
+            .default_width(left_width)
+            .min_width(220.0)
+            .max_width(460.0)
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(238, 234, 247))
+                    .fill(Color32::from_rgb(37, 37, 38))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
                     .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
                 self.control_panel(ui);
             });
 
-        egui::SidePanel::right("activity")
-            .resizable(true)
-            .default_width(280.0)
-            .frame(
-                egui::Frame::none()
-                    .fill(Color32::from_rgb(238, 234, 247))
-                    .inner_margin(egui::Margin::same(14.0)),
-            )
-            .show(ctx, |ui| {
-                self.right_panel(ui, ctx);
-            });
+        if show_right_panel {
+            egui::SidePanel::right("activity")
+                .resizable(true)
+                .default_width(right_width)
+                .min_width(240.0)
+                .max_width(520.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(37, 37, 38))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
+                        .inner_margin(egui::Margin::same(14.0)),
+                )
+                .show(ctx, |ui| {
+                    self.right_panel(ui, ctx);
+                });
+        } else {
+            egui::TopBottomPanel::bottom("preview_compact")
+                .resizable(true)
+                .default_height(220.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(37, 37, 38))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 62, 64)))
+                        .inner_margin(egui::Margin::same(12.0)),
+                )
+                .show(ctx, |ui| {
+                    self.right_panel(ui, ctx);
+                });
+        }
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(246, 244, 251))
+                    .fill(Color32::from_rgb(30, 30, 30))
                     .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
@@ -989,15 +1007,15 @@ fn is_image_extension(ext: &str) -> bool {
 
 fn ext_color(ext: &str) -> Color32 {
     match ext {
-        "pdf" => Color32::from_rgb(173, 88, 99),
-        "doc" | "docx" => Color32::from_rgb(96, 127, 176),
-        "xls" | "xlsx" | "csv" => Color32::from_rgb(89, 150, 117),
-        "ppt" | "pptx" => Color32::from_rgb(190, 128, 92),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" => Color32::from_rgb(125, 106, 168),
-        "zip" | "rar" | "7z" => Color32::from_rgb(112, 98, 128),
-        "mp3" | "wav" | "flac" => Color32::from_rgb(115, 120, 176),
-        "mp4" | "mkv" | "mov" => Color32::from_rgb(120, 90, 145),
-        _ => Color32::from_rgb(118, 110, 142),
+        "pdf" => Color32::from_rgb(186, 92, 104),
+        "doc" | "docx" => Color32::from_rgb(97, 139, 216),
+        "xls" | "xlsx" | "csv" => Color32::from_rgb(86, 172, 126),
+        "ppt" | "pptx" => Color32::from_rgb(215, 150, 88),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" => Color32::from_rgb(139, 118, 214),
+        "zip" | "rar" | "7z" => Color32::from_rgb(136, 122, 170),
+        "mp3" | "wav" | "flac" => Color32::from_rgb(103, 132, 209),
+        "mp4" | "mkv" | "mov" => Color32::from_rgb(171, 101, 195),
+        _ => Color32::from_rgb(112, 121, 167),
     }
 }
 
@@ -1007,6 +1025,52 @@ fn extension_of(path: &str) -> String {
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default()
+}
+
+fn file_meta_labels(path: &str) -> (String, String, String) {
+    let ext = extension_of(path);
+    let kind = if ext.is_empty() {
+        "FILE".to_string()
+    } else {
+        ext.to_uppercase()
+    };
+
+    match fs::metadata(path) {
+        Ok(meta) => {
+            let size = human_size(meta.len());
+            let time = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .map(short_time_label)
+                .unwrap_or_else(|| "--:--".to_string());
+            (kind, size, time)
+        }
+        Err(_) => (kind, "-".to_string(), "--:--".to_string()),
+    }
+}
+
+fn human_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.0} KB", b / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn short_time_label(unix_secs: u64) -> String {
+    let mins = (unix_secs / 60) % 60;
+    let hours = (unix_secs / 3600) % 24;
+    format!("{hours:02}:{mins:02}")
 }
 
 fn matches_filter(path: &str, filter: FileFilter) -> bool {
@@ -1047,12 +1111,6 @@ fn matches_filter(path: &str, filter: FileFilter) -> bool {
             ext.as_str(),
             "mp3" | "wav" | "flac" | "aac" | "ogg" | "mp4" | "mkv" | "mov" | "avi" | "webm"
         ),
-        FileFilter::Other => {
-            !matches_filter(path, FileFilter::Documents)
-                && !matches_filter(path, FileFilter::Images)
-                && !matches_filter(path, FileFilter::Code)
-                && !matches_filter(path, FileFilter::Media)
-        }
     }
 }
 
