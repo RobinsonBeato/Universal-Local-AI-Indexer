@@ -9,12 +9,23 @@ Indexador y buscador local de archivos para Windows (también portable a Linux/m
 - Ultrarrápido: Tantivy full-text + SQLite metadata + indexación incremental.
 - Privacidad por defecto: excludes sensibles preconfigurados.
 
+## Qué indexa
+
+- Todos los tipos de archivo por `nombre` y `ruta` (incluye Word, imágenes, binarios, etc.).
+- Contenido full-text para extensiones de texto configuradas (`txt`, `md`, `log`, código, etc.).
+
 ## Quickstart
 
 ### 1) Build
 
 ```bash
 cargo build --release -p lupa
+```
+
+GUI (desktop):
+
+```bash
+cargo run -p lupa-gui
 ```
 
 ### 2) Indexar por primera vez
@@ -59,6 +70,17 @@ cargo run -p lupa -- doctor
 - `lupa index watch`
 - `lupa search "<query>" [--json] [--limit N] [--path-prefix ...] [--regex ...] [--highlight] [--stats]`
 - `lupa doctor`
+
+## Interfaz gráfica
+
+La app `lupa-gui` ofrece:
+
+- root selector
+- `Index Build`
+- `Watch Start/Stop`
+- `Doctor`
+- búsqueda con `limit`, `path_prefix`, `regex`, `highlight`
+- panel de resultados + panel de actividad
 
 ## Configuración (`config.toml` opcional)
 

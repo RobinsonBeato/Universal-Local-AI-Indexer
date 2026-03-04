@@ -74,6 +74,7 @@ pub struct DoctorReport {
 #[derive(Clone)]
 struct Fields {
     path: Field,
+    name: Field,
     content: Field,
 }
 
@@ -95,6 +96,7 @@ struct FileSnapshot {
 
 struct PreparedDoc {
     record: FileRecord,
+    name: String,
     content: String,
     is_new: bool,
 }
@@ -166,6 +168,7 @@ impl LupaEngine {
             ));
             let doc = doc!(
                 fields.path => prepared_doc.record.path.clone(),
+                fields.name => prepared_doc.name,
                 fields.content => prepared_doc.content
             );
             writer.add_document(doc)?;
@@ -217,7 +220,7 @@ impl LupaEngine {
             .try_into()?;
 
         let searcher = reader.searcher();
-        let parser = QueryParser::for_index(&index, vec![fields.content]);
+        let parser = QueryParser::for_index(&index, vec![fields.name, fields.content]);
         let q = parser
             .parse_query(query)
             .with_context(|| format!("query inválida: {query}"))?;
@@ -326,11 +329,18 @@ impl LupaEngine {
         if self.index_dir.join("meta.json").exists() {
             let index = Index::open_in_dir(&self.index_dir)?;
             let schema = index.schema();
-            return Ok((index, resolve_fields(&schema)?));
+            if let Ok(fields) = resolve_fields(&schema) {
+                return Ok((index, fields));
+            }
+
+            // Schema viejo sin campos de búsqueda por nombre: recrear índice local.
+            std::fs::remove_dir_all(&self.index_dir)?;
+            std::fs::create_dir_all(&self.index_dir)?;
         }
 
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("path", STRING | STORED);
+        schema_builder.add_text_field("name", TEXT | STORED);
         schema_builder.add_text_field("content", TEXT | STORED);
         let schema = schema_builder.build();
         let index = Index::create_in_dir(&self.index_dir, schema.clone())?;
@@ -379,34 +389,41 @@ impl LupaEngine {
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
-            .filter(|path| self.config.is_allowed_extension(path))
             .collect::<Vec<_>>()
     }
 
     fn prepare_doc(&self, snapshot: &FileSnapshot) -> Result<Option<PreparedDoc>> {
-        if snapshot.size > self.config.max_file_size_bytes {
-            return Ok(None);
-        }
+        let name = snapshot
+            .path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| snapshot.path_str.clone());
 
-        let bytes = std::fs::read(&snapshot.path)
-            .with_context(|| format!("no se pudo leer {}", snapshot.path.display()))?;
-        if bytes.contains(&0) {
-            return Ok(None);
-        }
+        let mut hash = None;
+        let mut content = String::new();
 
-        let hash = if snapshot.size <= self.config.hash_small_file_threshold {
-            Some(format!("{:x}", xxh3_64(&bytes)))
-        } else {
-            None
-        };
+        let should_read_content = snapshot.size <= self.config.max_file_size_bytes
+            && self.config.is_text_extension(&snapshot.path);
 
-        if let Some(prev) = &snapshot.prev {
-            if hash.is_some() && prev.hash == hash {
-                return Ok(None);
+        if should_read_content {
+            let bytes = std::fs::read(&snapshot.path)
+                .with_context(|| format!("no se pudo leer {}", snapshot.path.display()))?;
+
+            if snapshot.size <= self.config.hash_small_file_threshold {
+                hash = Some(format!("{:x}", xxh3_64(&bytes)));
+            }
+
+            if let Some(prev) = &snapshot.prev {
+                if hash.is_some() && prev.hash == hash {
+                    return Ok(None);
+                }
+            }
+
+            if !bytes.contains(&0) {
+                content = String::from_utf8_lossy(&bytes).to_string();
             }
         }
 
-        let content = String::from_utf8_lossy(&bytes).to_string();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock should be after unix epoch")
@@ -421,6 +438,7 @@ impl LupaEngine {
 
         Ok(Some(PreparedDoc {
             record,
+            name,
             content,
             is_new: snapshot.prev.is_none(),
         }))
@@ -429,8 +447,13 @@ impl LupaEngine {
 
 fn resolve_fields(schema: &Schema) -> Result<Fields> {
     let path = schema.get_field("path")?;
+    let name = schema.get_field("name")?;
     let content = schema.get_field("content")?;
-    Ok(Fields { path, content })
+    Ok(Fields {
+        path,
+        name,
+        content,
+    })
 }
 
 fn normalize_path(path: &Path) -> String {

@@ -6,6 +6,7 @@
 
 1. `crates/core` (`lupa-core`): indexación, storage y query.
 2. `crates/cli` (`lupa`): interfaz de línea de comandos.
+3. `crates/gui` (`lupa-gui`): interfaz desktop sobre el mismo core.
 
 ## Storage model
 
@@ -28,11 +29,13 @@
 
 ## Incremental strategy
 
-1. Se recorre el filesystem con `walkdir` aplicando excludes y extensión permitida.
+1. Se recorre el filesystem con `walkdir` aplicando excludes (sin limitar tipos de archivo).
 2. Se compara contra metadata previa (`mtime + size`).
 3. Si el archivo es chico, se calcula `xxhash` para evitar reindexar cambios espurios.
 4. Sólo archivos nuevos/cambiados se vuelven a indexar.
 5. Paths eliminados se borran de Tantivy y SQLite.
+
+Nota: se indexan todos los archivos por nombre/ruta. El full-text de contenido se aplica sólo a extensiones de texto configuradas.
 
 ## Concurrency
 

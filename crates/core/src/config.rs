@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LupaConfig {
     pub excludes: Vec<String>,
+    // Extensiones que se leerán como texto para full-text en contenido.
     pub include_extensions: Vec<String>,
     pub max_file_size_bytes: u64,
     pub hash_small_file_threshold: u64,
@@ -60,7 +61,7 @@ impl LupaConfig {
             .any(|needle| lower.contains(&needle.to_lowercase()))
     }
 
-    pub fn is_allowed_extension(&self, path: &Path) -> bool {
+    pub fn is_text_extension(&self, path: &Path) -> bool {
         let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
             return false;
         };
