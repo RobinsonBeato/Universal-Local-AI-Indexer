@@ -175,7 +175,7 @@ impl LupaApp {
             limit: 20,
             path_prefix: String::new(),
             regex: String::new(),
-            highlight: true,
+            highlight: false,
             busy: false,
             watch: WatchState::default(),
             status: "Listo para buscar".to_string(),

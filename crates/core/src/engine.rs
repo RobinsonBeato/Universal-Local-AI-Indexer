@@ -10,7 +10,7 @@ use regex::Regex;
 use serde::Serialize;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, Value, FAST, STORED, STRING, TEXT};
+use tantivy::schema::{Field, FieldType, Schema, Value, FAST, STORED, STRING, TEXT};
 use tantivy::{doc, Index, ReloadPolicy, TantivyDocument, Term};
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
@@ -80,6 +80,11 @@ struct Fields {
     name: Field,
     content: Field,
     mtime: Field,
+}
+
+struct QuerySignals {
+    query_lower: String,
+    terms: Vec<String>,
 }
 
 pub struct LupaEngine {
@@ -243,7 +248,7 @@ impl LupaEngine {
             .parse_query(query)
             .with_context(|| format!("query inválida: {query}"))?;
 
-        let oversample = opts.limit.saturating_mul(10).max(opts.limit);
+        let oversample = opts.limit.saturating_mul(4).max(opts.limit);
         let top_docs = searcher.search(&q, &TopDocs::with_limit(oversample))?;
 
         let regex = match &opts.regex {
@@ -257,6 +262,7 @@ impl LupaEngine {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock should be after unix epoch")
             .as_secs() as i64;
+        let signals = build_query_signals(query);
 
         let mut hits = Vec::new();
         for (score, addr) in top_docs {
@@ -268,11 +274,6 @@ impl LupaEngine {
                 .to_string();
             let name = retrieved
                 .get_first(fields.name)
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let content = retrieved
-                .get_first(fields.content)
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
@@ -288,28 +289,35 @@ impl LupaEngine {
             }
 
             if let Some(re) = &regex {
+                let content = self
+                    .load_query_content(Path::new(&path))
+                    .unwrap_or_default();
                 let hay = format!("{}\n{}", path, content);
                 if !re.is_match(&hay) {
                     continue;
                 }
             }
 
-            let final_score = rerank_score(score, &name, &path, mtime, query, now_unix);
-            let snippet = if opts.highlight {
-                Some(highlight_snippet(&content, query))
-            } else {
-                None
-            };
+            let final_score = rerank_score(score, &name, &path, mtime, &signals, now_unix);
 
             hits.push(SearchHit {
                 path,
                 score: final_score,
-                snippet,
+                snippet: None,
             });
         }
 
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         hits.truncate(opts.limit);
+
+        if opts.highlight {
+            for hit in &mut hits {
+                let content = self
+                    .load_query_content(Path::new(&hit.path))
+                    .unwrap_or_default();
+                hit.snippet = Some(highlight_snippet(&content, query));
+            }
+        }
 
         Ok(SearchResult {
             query: query.to_string(),
@@ -363,7 +371,9 @@ impl LupaEngine {
             let index = Index::open_in_dir(&self.index_dir)?;
             let schema = index.schema();
             if let Ok(fields) = resolve_fields(&schema) {
-                return Ok((index, fields));
+                if is_schema_compatible(&schema, &fields) {
+                    return Ok((index, fields));
+                }
             }
 
             // Schema viejo/incompatible: recrear índice local y resetear metadata incremental.
@@ -377,7 +387,7 @@ impl LupaEngine {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("path", STRING | STORED);
         schema_builder.add_text_field("name", TEXT | STORED);
-        schema_builder.add_text_field("content", TEXT | STORED);
+        schema_builder.add_text_field("content", TEXT);
         schema_builder.add_i64_field("mtime", FAST | STORED);
         let schema = schema_builder.build();
         let index = Index::create_in_dir(&self.index_dir, schema.clone())?;
@@ -508,6 +518,14 @@ impl LupaEngine {
         Ok(String::new())
     }
 
+    fn load_query_content(&self, path: &Path) -> Result<String> {
+        let meta = std::fs::metadata(path)?;
+        if !self.config.allows_content_extract(path, meta.len()) {
+            return Ok(String::new());
+        }
+        self.extract_indexable_content(path, None)
+    }
+
     fn acquire_writer_with_retry(&self, index: &Index) -> Result<tantivy::IndexWriter> {
         let mut last_err = None;
         for attempt in 0..10 {
@@ -548,6 +566,14 @@ fn resolve_fields(schema: &Schema) -> Result<Fields> {
     })
 }
 
+fn is_schema_compatible(schema: &Schema, fields: &Fields) -> bool {
+    let content_is_not_stored = match schema.get_field_entry(fields.content).field_type() {
+        FieldType::Str(opts) => !opts.is_stored(),
+        _ => true,
+    };
+    content_is_not_stored
+}
+
 fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -564,35 +590,56 @@ fn highlight_snippet(content: &str, query: &str) -> String {
     content.chars().take(120).collect()
 }
 
+fn build_query_signals(query: &str) -> QuerySignals {
+    let query_lower = query.trim().to_lowercase();
+    let terms = query_lower
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    QuerySignals { query_lower, terms }
+}
+
 fn rerank_score(
     base_score: f32,
     name: &str,
     path: &str,
     mtime: i64,
-    query: &str,
+    q: &QuerySignals,
     now_unix: i64,
 ) -> f32 {
-    let query_l = query.trim().to_lowercase();
-    if query_l.is_empty() {
+    if q.query_lower.is_empty() {
         return base_score;
     }
 
-    let terms = query_l
-        .split_whitespace()
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>();
     let name_l = name.to_lowercase();
     let path_l = path.to_lowercase();
 
-    let term_count = terms.len().max(1) as f32;
-    let name_hits = terms.iter().filter(|t| name_l.contains(**t)).count() as f32;
-    let path_hits = terms.iter().filter(|t| path_l.contains(**t)).count() as f32;
+    let term_count = q.terms.len().max(1) as f32;
+    let name_hits = q
+        .terms
+        .iter()
+        .filter(|t| name_l.contains(t.as_str()))
+        .count() as f32;
+    let path_hits = q
+        .terms
+        .iter()
+        .filter(|t| path_l.contains(t.as_str()))
+        .count() as f32;
 
     let name_ratio = name_hits / term_count;
     let path_ratio = path_hits / term_count;
 
-    let exact_name_bonus = if name_l.contains(&query_l) { 1.8 } else { 0.0 };
-    let exact_path_bonus = if path_l.contains(&query_l) { 0.9 } else { 0.0 };
+    let exact_name_bonus = if name_l.contains(&q.query_lower) {
+        1.8
+    } else {
+        0.0
+    };
+    let exact_path_bonus = if path_l.contains(&q.query_lower) {
+        0.9
+    } else {
+        0.0
+    };
 
     let age_secs = (now_unix - mtime).max(0);
     let age_days = age_secs / 86_400;
