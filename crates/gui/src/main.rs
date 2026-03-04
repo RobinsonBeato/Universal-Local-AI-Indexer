@@ -163,6 +163,7 @@ struct LupaApp {
     selected_path: Option<String>,
     selected_filter: FileFilter,
     preview_cache: HashMap<String, PreviewData>,
+    large_previews: HashMap<String, LargePreviewState>,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
@@ -178,12 +179,27 @@ struct PreviewData {
     name: String,
 }
 
+enum LargePreviewState {
+    Loading,
+    Ready(TextureHandle),
+    Error(String),
+    Unsupported,
+}
+
+struct LargePreviewData {
+    image: Option<egui::ColorImage>,
+}
+
 enum UiEvent {
     BuildDone(Result<IndexStats, String>),
     SearchDone(Result<SearchResult, String>),
     DoctorDone(Result<DoctorReport, String>),
     WatchTick(Result<IndexStats, String>),
     WatchStopped,
+    LargePreviewLoaded {
+        path: String,
+        result: Result<LargePreviewData, String>,
+    },
 }
 
 impl LupaApp {
@@ -212,6 +228,7 @@ impl LupaApp {
             selected_path: None,
             selected_filter: FileFilter::All,
             preview_cache: HashMap::new(),
+            large_previews: HashMap::new(),
             tx,
             rx,
         }
@@ -373,7 +390,24 @@ impl LupaApp {
         }
     }
 
-    fn drain_events(&mut self) {
+    fn request_large_preview(&mut self, path: &str) {
+        if self.large_previews.contains_key(path) {
+            return;
+        }
+        self.large_previews
+            .insert(path.to_string(), LargePreviewState::Loading);
+        let tx = self.tx.clone();
+        let path_owned = path.to_string();
+        std::thread::spawn(move || {
+            let result = load_large_preview_data(&path_owned);
+            let _ = tx.send(UiEvent::LargePreviewLoaded {
+                path: path_owned,
+                result,
+            });
+        });
+    }
+
+    fn drain_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 UiEvent::BuildDone(result) => {
@@ -403,6 +437,7 @@ impl LupaApp {
                             );
                             self.logs.push(self.status.clone());
                             self.preview_cache.clear();
+                            self.large_previews.clear();
                             self.selected_filter = FileFilter::All;
                             self.selected_path = result.hits.first().map(|h| h.path.clone());
                             self.last_search = Some(result);
@@ -445,6 +480,26 @@ impl LupaApp {
                     self.status = "Monitor detenido".to_string();
                     self.logs.push("Monitor detenido".to_string());
                 }
+                UiEvent::LargePreviewLoaded { path, result } => match result {
+                    Ok(data) => {
+                        if let Some(image) = data.image {
+                            let texture = ctx.load_texture(
+                                format!("preview:{}", path),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.large_previews
+                                .insert(path, LargePreviewState::Ready(texture));
+                        } else {
+                            self.large_previews
+                                .insert(path, LargePreviewState::Unsupported);
+                        }
+                    }
+                    Err(err) => {
+                        self.large_previews
+                            .insert(path, LargePreviewState::Error(err));
+                    }
+                },
             }
 
             if self.logs.len() > 220 {
@@ -803,14 +858,16 @@ impl LupaApp {
                         self.preview_cache.insert(path.clone(), preview);
                     }
                     if let Some(preview) = self.preview_cache.get(&path) {
+                        let preview_path = preview.path.clone();
+                        let preview_name = preview.name.clone();
                         ui.label(
-                            RichText::new(&preview.name)
+                            RichText::new(&preview_name)
                                 .strong()
                                 .size(18.0)
                                 .color(Color32::WHITE),
                         );
-                        ui.add(egui::Label::new(RichText::new(&preview.path).small()).wrap());
-                        let (kind, size_label, time_label) = file_meta_labels(&preview.path);
+                        ui.add(egui::Label::new(RichText::new(&preview_path).small()).wrap());
+                        let (kind, size_label, time_label) = file_meta_labels(&preview_path);
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
                                 RichText::new(kind)
@@ -822,20 +879,60 @@ impl LupaApp {
                         });
 
                         ui.add_space(8.0);
+                        let ext = extension_of(&preview_path);
+                        if is_image_extension(&ext) {
+                            match self.large_previews.get(&preview_path) {
+                                Some(LargePreviewState::Ready(texture)) => {
+                                    let available_w = ui.available_width().max(120.0);
+                                    let max_h = 420.0;
+                                    let size = texture.size_vec2();
+                                    let scale = (available_w / size.x).min(max_h / size.y).min(1.0);
+                                    ui.image((texture.id(), size * scale));
+                                }
+                                Some(LargePreviewState::Loading) => {
+                                    ui.label(
+                                        RichText::new("Cargando vista previa grande...")
+                                            .small()
+                                            .color(Color32::from_rgb(140, 150, 170)),
+                                    );
+                                }
+                                Some(LargePreviewState::Error(err)) => {
+                                    ui.label(
+                                        RichText::new(format!("Preview no disponible: {err}"))
+                                            .small()
+                                            .color(Color32::from_rgb(200, 120, 120)),
+                                    );
+                                }
+                                Some(LargePreviewState::Unsupported) => {
+                                    ui.label(
+                                        RichText::new("No hay preview grande para este formato.")
+                                            .small()
+                                            .color(Color32::from_rgb(120, 130, 155)),
+                                    );
+                                }
+                                None => {
+                                    if ui.button("Cargar vista previa grande").clicked() {
+                                        self.request_large_preview(&preview_path);
+                                    }
+                                }
+                            }
+                        }
+
+                        ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui.button("\u{1F680} Open").clicked() {
-                                let _ = open_file_path(Path::new(&preview.path));
+                                let _ = open_file_path(Path::new(&preview_path));
                             }
                             if ui.button("\u{1F4CE} Open with...").clicked() {
-                                let _ = open_with_dialog(Path::new(&preview.path));
+                                let _ = open_with_dialog(Path::new(&preview_path));
                             }
                             if ui.button("\u{1F4C1} Folder").clicked() {
-                                if let Some(parent) = Path::new(&preview.path).parent() {
+                                if let Some(parent) = Path::new(&preview_path).parent() {
                                     let _ = open_folder_path(parent);
                                 }
                             }
                             if ui.button("\u{1F4CB} Copy").clicked() {
-                                ui.ctx().copy_text(preview.path.clone());
+                                ui.ctx().copy_text(preview_path.clone());
                             }
                         });
 
@@ -848,7 +945,13 @@ impl LupaApp {
                         );
                         if let Some(hit) = self.selected_hit() {
                             if let Some(snippet) = hit.snippet {
-                                ui.add(egui::Label::new(RichText::new(snippet).small()).wrap());
+                                egui::ScrollArea::vertical()
+                                    .max_height(180.0)
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::Label::new(RichText::new(snippet).small()).wrap(),
+                                        );
+                                    });
                             } else {
                                 ui.label(
                                     RichText::new("Sin fragmento disponible para este archivo.")
@@ -1092,7 +1195,7 @@ impl LupaApp {
 
 impl eframe::App for LupaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.drain_events();
+        self.drain_events(ctx);
 
         let win_width = ctx.screen_rect().width();
         let show_right_panel = win_width >= 1100.0;
@@ -1234,6 +1337,22 @@ fn load_thumbnail(ctx: &egui::Context, path: &str) -> Thumbnail {
     };
     let color = ext_color(&ext);
     Thumbnail::Badge { label, color }
+}
+
+fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
+    let ext = extension_of(path);
+    if !is_image_extension(&ext) {
+        return Ok(LargePreviewData { image: None });
+    }
+
+    let img = image::open(path).map_err(|e| format!("no se pudo abrir imagen: {e}"))?;
+    let resized = img.resize(1400, 1400, image::imageops::FilterType::Triangle);
+    let rgba = resized.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    Ok(LargePreviewData {
+        image: Some(color_img),
+    })
 }
 
 fn is_image_extension(ext: &str) -> bool {
