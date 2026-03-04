@@ -779,43 +779,54 @@ impl LupaApp {
 
         ui.add_space(16.0);
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if let Some(result) = &self.last_search {
-                    let hits = result
-                        .hits
-                        .iter()
-                        .filter(|h| matches_filter(&h.path, self.selected_filter))
-                        .cloned()
-                        .collect::<Vec<_>>();
+        if let Some(result) = &self.last_search {
+            let hits = result
+                .hits
+                .iter()
+                .filter(|h| matches_filter(&h.path, self.selected_filter))
+                .cloned()
+                .collect::<Vec<_>>();
 
-                    if hits.is_empty() {
+            if hits.is_empty() {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                         ui.centered_and_justified(|ui| {
                             ui.label(
                                 RichText::new("No files found in this collection.")
                                     .color(Color32::from_rgb(100, 116, 139)),
                             );
                         });
-                        return;
-                    }
+                    });
+                return;
+            }
 
-                    let selected_missing = match self.selected_path.as_ref() {
-                        Some(p) => !hits.iter().any(|h| &h.path == p),
-                        None => true,
-                    };
-                    if selected_missing {
-                        self.selected_path = hits.first().map(|h| h.path.clone());
-                    }
+            let selected_missing = match self.selected_path.as_ref() {
+                Some(p) => !hits.iter().any(|h| &h.path == p),
+                None => true,
+            };
+            if selected_missing {
+                self.selected_path = hits.first().map(|h| h.path.clone());
+            }
 
-                    for (idx, hit) in hits.iter().enumerate() {
+            // Virtualized rows: render only visible result cards for large hit sets.
+            let row_height = 114.0;
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, row_height, hits.len(), |ui, row_range| {
+                    for row in row_range {
+                        let hit = &hits[row];
                         let is_selected = self.selected_path.as_deref() == Some(hit.path.as_str());
-                        if self.result_row(ui, ctx, idx + 1, hit, is_selected) {
+                        if self.result_row(ui, ctx, row + 1, hit, is_selected) {
                             self.selected_path = Some(hit.path.clone());
                         }
                         ui.add_space(10.0);
                     }
-                } else {
+                });
+        } else {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
                         ui.vertical_centered(|ui| {
                             ui.add_space(100.0);
@@ -833,8 +844,8 @@ impl LupaApp {
                             );
                         });
                     });
-                }
-            });
+                });
+        }
     }
 
     fn right_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
