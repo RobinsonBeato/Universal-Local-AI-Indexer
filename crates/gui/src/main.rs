@@ -1132,13 +1132,13 @@ impl LupaApp {
         let (ext, size_label, time_label) = file_meta_labels(&hit.path);
 
         let bg_color = if is_selected {
-            Color32::from_rgb(30, 30, 45)
+            Color32::from_rgb(40, 34, 60)
         } else {
             Color32::from_rgb(20, 20, 28)
         };
 
         let border_color = if is_selected {
-            Color32::from_rgb(99, 102, 241)
+            Color32::from_rgb(155, 119, 255)
         } else {
             Color32::from_rgb(35, 35, 48)
         };
@@ -1377,7 +1377,9 @@ impl eframe::App for LupaApp {
         if !ctx.wants_keyboard_input() {
             let go_up = ctx.input(|i| i.key_pressed(Key::ArrowUp));
             let go_down = ctx.input(|i| i.key_pressed(Key::ArrowDown));
-            if go_up || go_down {
+            let go_home = ctx.input(|i| i.key_pressed(Key::Home));
+            let go_end = ctx.input(|i| i.key_pressed(Key::End));
+            if go_up || go_down || go_home || go_end {
                 if let Some(search) = &self.last_search {
                     let filtered_paths = search
                         .hits
@@ -1391,7 +1393,11 @@ impl eframe::App for LupaApp {
                             .as_deref()
                             .and_then(|p| filtered_paths.iter().position(|v| *v == p))
                             .unwrap_or(0);
-                        let next_idx = if go_down {
+                        let next_idx = if go_home {
+                            0
+                        } else if go_end {
+                            filtered_paths.len().saturating_sub(1)
+                        } else if go_down {
                             (current_idx + 1).min(filtered_paths.len().saturating_sub(1))
                         } else {
                             current_idx.saturating_sub(1)
