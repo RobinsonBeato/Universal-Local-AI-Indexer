@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
 use eframe::egui::{
     self, Align, Color32, FontFamily, FontId, Key, RichText, Sense, Stroke, TextureHandle,
@@ -103,6 +105,8 @@ struct LupaApp {
     last_search: Option<SearchResult>,
     last_doctor: Option<DoctorReport>,
     thumbnails: HashMap<String, Thumbnail>,
+    selected_path: Option<String>,
+    preview_cache: HashMap<String, PreviewData>,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
@@ -111,6 +115,15 @@ struct LupaApp {
 enum Thumbnail {
     Image(TextureHandle),
     Badge { label: String, color: Color32 },
+}
+
+struct PreviewData {
+    path: String,
+    name: String,
+    ext: String,
+    size_bytes: u64,
+    modified_unix: u64,
+    image: Option<TextureHandle>, // only reused image thumbnail texture
 }
 
 enum UiEvent {
@@ -144,6 +157,8 @@ impl LupaApp {
             last_search: None,
             last_doctor: None,
             thumbnails: HashMap::new(),
+            selected_path: None,
+            preview_cache: HashMap::new(),
             tx,
             rx,
         }
@@ -281,6 +296,8 @@ impl LupaApp {
                                 result.total_hits, result.took_ms
                             );
                             self.logs.push(self.status.clone());
+                            self.preview_cache.clear();
+                            self.selected_path = result.hits.first().map(|h| h.path.clone());
                             self.last_search = Some(result);
                         }
                         Err(err) => {
@@ -455,7 +472,10 @@ impl LupaApp {
                 }
 
                 for (idx, hit) in hits.iter().enumerate() {
-                    self.result_row(ui, ctx, idx + 1, hit);
+                    let is_selected = self.selected_path.as_deref() == Some(hit.path.as_str());
+                    if self.result_row(ui, ctx, idx + 1, hit, is_selected) {
+                        self.selected_path = Some(hit.path.clone());
+                    }
                     ui.add_space(6.0);
                 }
             } else {
@@ -465,31 +485,115 @@ impl LupaApp {
         });
     }
 
-    fn right_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Actividad");
+    fn right_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading("Vista previa");
         ui.separator();
 
-        if let Some(doctor) = &self.last_doctor {
-            ui.label(RichText::new("Estado del sistema").strong());
-            for check in &doctor.checks {
-                ui.label(check);
+        if let Some(path) = self.selected_path.clone() {
+            let selected_hit = self.selected_hit();
+            if !self.preview_cache.contains_key(&path) {
+                let preview = self.load_preview_data_fast(ctx, &path);
+                self.preview_cache.insert(path.clone(), preview);
             }
-            ui.add_space(8.0);
+
+            if let Some(preview) = self.preview_cache.get(&path) {
+                ui.label(RichText::new(&preview.name).strong());
+                ui.label(RichText::new(&preview.path).small());
+                ui.add_space(6.0);
+                ui.label(format!("tipo: {}", preview.ext));
+                ui.label(format!("tamano: {} bytes", preview.size_bytes));
+                ui.label(format!("modificado: {}", preview.modified_unix));
+                ui.add_space(8.0);
+
+                if let Some(image) = &preview.image {
+                    let size = image.size_vec2();
+                    let max_w = ui.available_width().max(120.0);
+                    let scale = (max_w / size.x).min(280.0 / size.y).min(1.0);
+                    ui.image((image.id(), size * scale));
+                    ui.add_space(8.0);
+                }
+
+                if let Some(hit) = selected_hit {
+                    if let Some(text) = &hit.snippet {
+                        ui.label(RichText::new("Fragmento").strong());
+                        egui::ScrollArea::vertical()
+                            .max_height(260.0)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(text).small());
+                            });
+                    } else {
+                        ui.label("No hay fragmento disponible para este resultado.");
+                    }
+                } else {
+                    ui.label(RichText::new("Fragmento").strong());
+                    ui.label("Selecciona un resultado para ver contexto.");
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Abrir").clicked() {
+                        let _ = open_path(Path::new(&preview.path));
+                    }
+                    if ui.button("Carpeta").clicked() {
+                        if let Some(parent) = Path::new(&preview.path).parent() {
+                            let _ = open_path(parent);
+                        }
+                    }
+                });
+            }
+        } else {
+            ui.label("Selecciona un resultado para ver preview.");
         }
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for line in self.logs.iter().rev() {
-                ui.label(RichText::new(line).small());
+        ui.separator();
+        ui.collapsing("Actividad", |ui| {
+            if let Some(doctor) = &self.last_doctor {
+                ui.label(RichText::new("Estado del sistema").strong());
+                for check in &doctor.checks {
+                    ui.label(check);
+                }
+                ui.add_space(8.0);
             }
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for line in self.logs.iter().rev() {
+                    ui.label(RichText::new(line).small());
+                }
+            });
         });
     }
 
-    fn result_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, rank: usize, hit: &SearchHit) {
+    fn selected_hit(&self) -> Option<SearchHit> {
+        let path = self.selected_path.as_ref()?;
+        let result = self.last_search.as_ref()?;
+        result.hits.iter().find(|h| &h.path == path).cloned()
+    }
+
+    fn result_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        rank: usize,
+        hit: &SearchHit,
+        is_selected: bool,
+    ) -> bool {
+        let mut row_selected = false;
         let frame = egui::Frame::group(ui.style())
-            .fill(Color32::WHITE)
+            .fill(if is_selected {
+                Color32::from_rgb(239, 233, 250)
+            } else {
+                Color32::WHITE
+            })
             .rounding(egui::Rounding::same(12.0))
             .inner_margin(egui::Margin::same(12.0))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(215, 209, 232)));
+            .stroke(Stroke::new(
+                1.0,
+                if is_selected {
+                    Color32::from_rgb(160, 140, 200)
+                } else {
+                    Color32::from_rgb(215, 209, 232)
+                },
+            ));
 
         frame.show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -510,6 +614,9 @@ impl LupaApp {
                                 .strong()
                                 .color(Color32::from_rgb(36, 30, 52));
                             let response = ui.add(egui::Label::new(title).sense(Sense::click()));
+                            if response.clicked() {
+                                row_selected = true;
+                            }
 
                             if response.double_clicked() {
                                 let _ = open_path(Path::new(&hit.path));
@@ -547,6 +654,8 @@ impl LupaApp {
                 });
             });
         });
+
+        row_selected
     }
 
     fn paint_thumbnail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, path: &str) {
@@ -577,6 +686,46 @@ impl LupaApp {
         self.thumbnails
             .get(path)
             .expect("thumbnail should exist after insertion")
+    }
+
+    fn load_preview_data_fast(&mut self, ctx: &egui::Context, path: &str) -> PreviewData {
+        let p = Path::new(path);
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_else(|| "file".to_string());
+        let name = file_name_from_path(path);
+
+        let mut size_bytes = 0u64;
+        let mut modified_unix = 0u64;
+        if let Ok(meta) = fs::metadata(p) {
+            size_bytes = meta.len();
+            if let Ok(modified) = meta.modified() {
+                modified_unix = modified
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+            }
+        }
+
+        let image = if is_image_extension(&ext) {
+            match self.thumbnail_for_path(ctx, path) {
+                Thumbnail::Image(tex) => Some(tex.clone()),
+                Thumbnail::Badge { .. } => None,
+            }
+        } else {
+            None
+        };
+
+        PreviewData {
+            path: path.to_string(),
+            name,
+            ext,
+            size_bytes,
+            modified_unix,
+            image,
+        }
     }
 }
 
@@ -615,7 +764,7 @@ impl eframe::App for LupaApp {
                     .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
-                self.right_panel(ui);
+                self.right_panel(ui, ctx);
             });
 
         egui::CentralPanel::default()

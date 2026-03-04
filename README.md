@@ -84,6 +84,10 @@ La app `lupa-gui` ofrece:
 - `Doctor`
 - búsqueda con `limit`, `path_prefix`, `regex`, `highlight`
 - panel de resultados + panel de actividad
+- vista previa lateral del resultado seleccionado:
+  - fragmento contextual alrededor de la búsqueda (texto/docx/pdf)
+  - preview de imagen ampliado cuando aplica
+  - metadata + acciones rápidas (`Abrir`, `Carpeta`)
 
 ## Configuración (`config.toml` opcional)
 
