@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +14,7 @@ use eframe::egui::{
     TextureHandle,
 };
 use lupa_core::{
+    extractors::{extract_docx_text, extract_pdf_text},
     DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions, SearchResult,
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
@@ -164,6 +166,7 @@ struct LupaApp {
     selected_filter: FileFilter,
     preview_cache: HashMap<String, PreviewData>,
     large_previews: HashMap<String, LargePreviewState>,
+    snippet_cache: HashMap<String, SnippetState>,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
@@ -190,6 +193,13 @@ struct LargePreviewData {
     image: Option<egui::ColorImage>,
 }
 
+enum SnippetState {
+    Loading,
+    Ready(String),
+    Error(String),
+    Unsupported,
+}
+
 enum UiEvent {
     BuildDone(Result<IndexStats, String>),
     SearchDone(Result<SearchResult, String>),
@@ -199,6 +209,10 @@ enum UiEvent {
     LargePreviewLoaded {
         path: String,
         result: Result<LargePreviewData, String>,
+    },
+    SnippetLoaded {
+        path: String,
+        result: Result<Option<String>, String>,
     },
 }
 
@@ -229,6 +243,7 @@ impl LupaApp {
             selected_filter: FileFilter::All,
             preview_cache: HashMap::new(),
             large_previews: HashMap::new(),
+            snippet_cache: HashMap::new(),
             tx,
             rx,
         }
@@ -407,6 +422,34 @@ impl LupaApp {
         });
     }
 
+    fn request_snippet(&mut self, path: &str) {
+        if self.snippet_cache.contains_key(path) {
+            return;
+        }
+        let query = self
+            .last_search
+            .as_ref()
+            .map(|s| s.query.clone())
+            .unwrap_or_else(|| self.query.clone());
+        if query.trim().is_empty() {
+            self.snippet_cache
+                .insert(path.to_string(), SnippetState::Unsupported);
+            return;
+        }
+
+        self.snippet_cache
+            .insert(path.to_string(), SnippetState::Loading);
+        let tx = self.tx.clone();
+        let path_owned = path.to_string();
+        std::thread::spawn(move || {
+            let result = load_snippet_data(&path_owned, &query);
+            let _ = tx.send(UiEvent::SnippetLoaded {
+                path: path_owned,
+                result,
+            });
+        });
+    }
+
     fn drain_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
@@ -438,6 +481,7 @@ impl LupaApp {
                             self.logs.push(self.status.clone());
                             self.preview_cache.clear();
                             self.large_previews.clear();
+                            self.snippet_cache.clear();
                             self.selected_filter = FileFilter::All;
                             self.selected_path = result.hits.first().map(|h| h.path.clone());
                             self.last_search = Some(result);
@@ -498,6 +542,18 @@ impl LupaApp {
                     Err(err) => {
                         self.large_previews
                             .insert(path, LargePreviewState::Error(err));
+                    }
+                },
+                UiEvent::SnippetLoaded { path, result } => match result {
+                    Ok(Some(snippet)) => {
+                        self.snippet_cache
+                            .insert(path, SnippetState::Ready(snippet));
+                    }
+                    Ok(None) => {
+                        self.snippet_cache.insert(path, SnippetState::Unsupported);
+                    }
+                    Err(err) => {
+                        self.snippet_cache.insert(path, SnippetState::Error(err));
                     }
                 },
             }
@@ -964,11 +1020,52 @@ impl LupaApp {
                                         );
                                     });
                             } else {
-                                ui.label(
-                                    RichText::new("Sin fragmento disponible para este archivo.")
-                                        .small()
-                                        .color(Color32::from_rgb(120, 130, 155)),
-                                );
+                                match self.snippet_cache.get(&hit.path) {
+                                    Some(SnippetState::Ready(snippet)) => {
+                                        egui::ScrollArea::vertical().max_height(180.0).show(
+                                            ui,
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(snippet).small(),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            },
+                                        );
+                                    }
+                                    Some(SnippetState::Loading) => {
+                                        ui.label(
+                                            RichText::new("Cargando fragmento...")
+                                                .small()
+                                                .color(Color32::from_rgb(140, 150, 170)),
+                                        );
+                                    }
+                                    Some(SnippetState::Error(err)) => {
+                                        ui.label(
+                                            RichText::new(format!("Snippet no disponible: {err}"))
+                                                .small()
+                                                .color(Color32::from_rgb(200, 120, 120)),
+                                        );
+                                    }
+                                    Some(SnippetState::Unsupported) => {
+                                        ui.label(
+                                            RichText::new(
+                                                "Sin fragmento para este formato o contenido.",
+                                            )
+                                            .small()
+                                            .color(Color32::from_rgb(120, 130, 155)),
+                                        );
+                                    }
+                                    None => {
+                                        self.request_snippet(&hit.path);
+                                        ui.label(
+                                            RichText::new("Preparando fragmento...")
+                                                .small()
+                                                .color(Color32::from_rgb(140, 150, 170)),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -1092,6 +1189,42 @@ impl LupaApp {
                         )
                         .truncate(),
                     );
+
+                    ui.add_space(2.0);
+                    if let Some(snippet) = &hit.snippet {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(snippet)
+                                    .small()
+                                    .color(Color32::from_rgb(145, 155, 182)),
+                            )
+                            .truncate(),
+                        );
+                    } else {
+                        match self.snippet_cache.get(&hit.path) {
+                            Some(SnippetState::Ready(snippet)) => {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(snippet)
+                                            .small()
+                                            .color(Color32::from_rgb(145, 155, 182)),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                            Some(SnippetState::Loading) => {
+                                ui.label(
+                                    RichText::new("...cargando fragmento")
+                                        .small()
+                                        .color(Color32::from_rgb(115, 125, 150)),
+                                );
+                            }
+                            Some(SnippetState::Error(_)) | Some(SnippetState::Unsupported) => {}
+                            None => {
+                                self.request_snippet(&hit.path);
+                            }
+                        }
+                    }
 
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -1364,6 +1497,91 @@ fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
     Ok(LargePreviewData {
         image: Some(color_img),
     })
+}
+
+fn load_snippet_data(path: &str, query: &str) -> Result<Option<String>, String> {
+    let p = Path::new(path);
+    let ext = extension_of(path);
+    let content = if matches!(
+        ext.as_str(),
+        "txt"
+            | "md"
+            | "log"
+            | "rs"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "py"
+            | "java"
+            | "go"
+            | "cs"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "html"
+            | "css"
+            | "json"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "xml"
+            | "sql"
+            | "sh"
+            | "ps1"
+            | "csv"
+            | "rtf"
+    ) {
+        read_text_limited(p, 2 * 1024 * 1024)?
+    } else if ext == "docx" {
+        // Heavier extractor: deferred in background thread by design.
+        extract_docx_text(p).map_err(|e| e.to_string())?
+    } else if ext == "pdf" {
+        // Heavier extractor: deferred in background thread by design.
+        extract_pdf_text(p).map_err(|e| e.to_string())?
+    } else {
+        return Ok(None);
+    };
+
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(make_snippet(&content, query)))
+}
+
+fn read_text_limited(path: &Path, max_bytes: usize) -> Result<String, String> {
+    let f = fs::File::open(path).map_err(|e| format!("open fail: {e}"))?;
+    let mut buf = Vec::new();
+    let mut limited = f.take(max_bytes as u64);
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read fail: {e}"))?;
+    if buf.contains(&0) {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+fn make_snippet(content: &str, query: &str) -> String {
+    let q = query.to_lowercase();
+    let lower = content.to_lowercase();
+    if let Some(idx) = lower.find(&q) {
+        let start = idx.saturating_sub(60);
+        let end = (idx + query.len() + 120).min(content.len());
+        return content[start..end]
+            .replace('\n', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    content
+        .chars()
+        .take(180)
+        .collect::<String>()
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn is_image_extension(ext: &str) -> bool {
