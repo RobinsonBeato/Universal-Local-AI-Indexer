@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1319,7 +1320,7 @@ impl LupaApp {
 
     fn thumbnail_for_path(&mut self, ctx: &egui::Context, path: &str) -> &Thumbnail {
         if !self.thumbnails.contains_key(path) {
-            let thumb = load_thumbnail(ctx, path);
+            let thumb = load_thumbnail(ctx, path, &self.root);
             self.thumbnails.insert(path.to_string(), thumb);
         }
         self.thumbnails
@@ -1452,7 +1453,7 @@ fn file_name_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn load_thumbnail(ctx: &egui::Context, path: &str) -> Thumbnail {
+fn load_thumbnail(ctx: &egui::Context, path: &str, root: &str) -> Thumbnail {
     let p = Path::new(path);
     let ext = p
         .extension()
@@ -1461,7 +1462,34 @@ fn load_thumbnail(ctx: &egui::Context, path: &str) -> Thumbnail {
         .unwrap_or_default();
 
     if is_image_extension(&ext) {
-        if let Ok(img) = image::open(p) {
+        if let Some(cache_file) = thumbnail_cache_file(root, p) {
+            if cache_file.exists() {
+                if let Ok(img) = image::open(&cache_file) {
+                    let rgba = img.to_rgba8();
+                    let size = [rgba.width() as usize, rgba.height() as usize];
+                    let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                    let texture = ctx.load_texture(
+                        format!("thumb:{path}"),
+                        color_img,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    return Thumbnail::Image(texture);
+                }
+            }
+
+            if let Ok(img) = image::open(p) {
+                let thumb = img.thumbnail(64, 64).to_rgba8();
+                let _ = save_thumb_to_cache(&thumb, &cache_file);
+                let size = [thumb.width() as usize, thumb.height() as usize];
+                let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
+                let texture = ctx.load_texture(
+                    format!("thumb:{path}"),
+                    color_img,
+                    egui::TextureOptions::LINEAR,
+                );
+                return Thumbnail::Image(texture);
+            }
+        } else if let Ok(img) = image::open(p) {
             let thumb = img.thumbnail(64, 64).to_rgba8();
             let size = [thumb.width() as usize, thumb.height() as usize];
             let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
@@ -1481,6 +1509,33 @@ fn load_thumbnail(ctx: &egui::Context, path: &str) -> Thumbnail {
     };
     let color = ext_color(&ext);
     Thumbnail::Badge { label, color }
+}
+
+fn thumbnail_cache_file(root: &str, source: &Path) -> Option<PathBuf> {
+    let meta = fs::metadata(source).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.to_string_lossy().hash(&mut hasher);
+    mtime.hash(&mut hasher);
+    size.hash(&mut hasher);
+    let key = format!("{:016x}", hasher.finish());
+
+    let cache_dir = PathBuf::from(root).join(".lupa").join("thumb_cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    Some(cache_dir.join(format!("{key}.png")))
+}
+
+fn save_thumb_to_cache(thumb: &image::RgbaImage, cache_file: &Path) -> Result<(), String> {
+    thumb
+        .save(cache_file)
+        .map_err(|e| format!("no se pudo guardar thumb cache: {e}"))
 }
 
 fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
