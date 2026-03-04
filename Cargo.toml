@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
 eframe = { version = "0.30", default-features = true }
 num_cpus = "1"
+quick-xml = "0.38"
 rayon = "1"
 regex = "1"
 rfd = "0.15"
@@ -23,3 +24,4 @@ tantivy = "0.22"
 toml = "0.8"
 walkdir = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

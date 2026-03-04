@@ -12,7 +12,24 @@ Indexador y buscador local de archivos para Windows (también portable a Linux/m
 ## Qué indexa
 
 - Todos los tipos de archivo por `nombre` y `ruta` (incluye Word, imágenes, binarios, etc.).
-- Contenido full-text para extensiones de texto configuradas (`txt`, `md`, `log`, código, etc.).
+- Contenido full-text para:
+  - extensiones de texto configuradas (`txt`, `md`, `log`, código, etc.)
+  - `docx` (texto interno real)
+  - `pdf` con feature opcional
+
+### Habilitar extracción de PDF (opcional)
+
+CLI:
+
+```bash
+cargo run -p lupa --features lupa-core/pdf -- index build
+```
+
+GUI:
+
+```bash
+cargo run -p lupa-gui --features lupa-core/pdf
+```
 
 ## Quickstart
 
@@ -87,7 +104,7 @@ La app `lupa-gui` ofrece:
 Si existe en la raíz del proyecto, se carga automáticamente.
 
 ```toml
-excludes = ["node_modules", ".git", "target", "AppData", "Program Files", "Windows", "System32"]
+excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
 include_extensions = ["txt", "md", "log", "rs", "toml", "json", "js", "ts", "py", "sql"]
 max_file_size_bytes = 2097152
 hash_small_file_threshold = 65536
@@ -102,6 +119,7 @@ threads = 0
 - `node_modules`
 - `.git`
 - `target`
+- `.lupa`
 - `AppData`
 - `Program Files`
 - `Windows`

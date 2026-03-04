@@ -15,6 +15,7 @@
 - Ubicación: `.lupa/index/`
 - Campos:
   - `path` (`STRING | STORED`)
+  - `name` (`TEXT | STORED`)
   - `content` (`TEXT | STORED`)
 
 ### SQLite metadata
@@ -36,6 +37,7 @@
 5. Paths eliminados se borran de Tantivy y SQLite.
 
 Nota: se indexan todos los archivos por nombre/ruta. El full-text de contenido se aplica sólo a extensiones de texto configuradas.
+Además se extrae texto real de `docx`; para `pdf` la extracción es opcional con feature `lupa-core/pdf`.
 
 ## Concurrency
 
@@ -49,6 +51,7 @@ Excludes por defecto:
 - `node_modules`
 - `.git`
 - `target`
+- `.lupa`
 - `AppData`
 - `Program Files`
 - `Windows`

@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::config::LupaConfig;
+use crate::extractors::{extract_docx_text, extract_pdf_text};
 use crate::metadata::{FileRecord, MetadataStore};
 
 #[derive(Debug, Clone, Serialize)]
@@ -401,27 +402,23 @@ impl LupaEngine {
 
         let mut hash = None;
         let mut content = String::new();
+        let mut preloaded_bytes = None;
 
-        let should_read_content = snapshot.size <= self.config.max_file_size_bytes
-            && self.config.is_text_extension(&snapshot.path);
-
-        if should_read_content {
+        if snapshot.size <= self.config.hash_small_file_threshold {
             let bytes = std::fs::read(&snapshot.path)
                 .with_context(|| format!("no se pudo leer {}", snapshot.path.display()))?;
+            hash = Some(format!("{:x}", xxh3_64(&bytes)));
+            preloaded_bytes = Some(bytes);
+        }
 
-            if snapshot.size <= self.config.hash_small_file_threshold {
-                hash = Some(format!("{:x}", xxh3_64(&bytes)));
+        if let Some(prev) = &snapshot.prev {
+            if hash.is_some() && prev.hash == hash {
+                return Ok(None);
             }
+        }
 
-            if let Some(prev) = &snapshot.prev {
-                if hash.is_some() && prev.hash == hash {
-                    return Ok(None);
-                }
-            }
-
-            if !bytes.contains(&0) {
-                content = String::from_utf8_lossy(&bytes).to_string();
-            }
+        if snapshot.size <= self.config.max_file_size_bytes {
+            content = self.extract_indexable_content(&snapshot.path, preloaded_bytes.as_deref())?;
         }
 
         let now = std::time::SystemTime::now()
@@ -442,6 +439,41 @@ impl LupaEngine {
             content,
             is_new: snapshot.prev.is_none(),
         }))
+    }
+
+    fn extract_indexable_content(
+        &self,
+        path: &Path,
+        preloaded_bytes: Option<&[u8]>,
+    ) -> Result<String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if self.config.is_text_extension(path) {
+            let bytes = match preloaded_bytes {
+                Some(bytes) => bytes.to_vec(),
+                None => std::fs::read(path)
+                    .with_context(|| format!("no se pudo leer {}", path.display()))?,
+            };
+
+            if bytes.contains(&0) {
+                return Ok(String::new());
+            }
+            return Ok(String::from_utf8_lossy(&bytes).to_string());
+        }
+
+        if ext == "docx" {
+            return Ok(extract_docx_text(path).unwrap_or_default());
+        }
+
+        if ext == "pdf" {
+            return Ok(extract_pdf_text(path).unwrap_or_default());
+        }
+
+        Ok(String::new())
     }
 }
 
@@ -491,7 +523,7 @@ mod tests {
             .expect("should write fixture file for indexing");
 
         let mut cfg = LupaConfig::default();
-        cfg.excludes.clear();
+        cfg.excludes = vec![".lupa".to_string()];
         let engine = LupaEngine::new(root.clone(), cfg).expect("should create engine");
         let stats = engine
             .build_incremental()
