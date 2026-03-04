@@ -1,11 +1,14 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use lupa_core::{LupaConfig, LupaEngine, SearchOptions};
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -87,6 +90,7 @@ struct DoctorCmd {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = cli.root.canonicalize().unwrap_or(cli.root);
+    let watch_root = root.clone();
 
     let mut cfg = LupaConfig::load(&root)?;
     if cfg.threads > 0 {
@@ -124,22 +128,69 @@ fn main() -> Result<()> {
                     running_signal.store(false, Ordering::SeqCst);
                 })?;
 
+                // Initial sync to avoid missing pre-existing files.
+                let initial = engine.build_incremental()?;
+                if args.json {
+                    println!("{}", serde_json::to_string(&initial)?);
+                } else {
+                    println!(
+                        "watch init: scanned={} new={} updated={} skipped={} removed={} took={}ms",
+                        initial.scanned,
+                        initial.indexed_new,
+                        initial.indexed_updated,
+                        initial.skipped_unchanged,
+                        initial.removed,
+                        initial.duration_ms
+                    );
+                }
+
+                let (tx, rx) = mpsc::channel();
+                let mut watcher = recommended_watcher(move |res| {
+                    let _ = tx.send(res);
+                })?;
+                watcher.watch(&watch_root, RecursiveMode::Recursive)?;
+
+                let mut dirty = HashSet::<PathBuf>::new();
                 while running.load(Ordering::SeqCst) {
-                    let stats = engine.build_incremental()?;
+                    match rx.recv_timeout(Duration::from_secs(args.interval_secs)) {
+                        Ok(Ok(event)) => {
+                            for p in event.paths {
+                                dirty.insert(p);
+                            }
+                        }
+                        Ok(Err(err)) => {
+                            eprintln!("watch error: {err}");
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+
+                    if dirty.is_empty() {
+                        continue;
+                    }
+
+                    let dirty_batch = dirty.drain().collect::<Vec<_>>();
+                    let stats = if dirty_batch.len() > 5000 {
+                        // Overflow safety valve: rebuild if event burst is too large.
+                        engine.build_incremental()?
+                    } else {
+                        engine.apply_dirty_paths(&dirty_batch)?
+                    };
+
                     if args.json {
                         println!("{}", serde_json::to_string(&stats)?);
                     } else {
                         println!(
-                            "watch tick: scanned={} new={} updated={} skipped={} removed={} took={}ms",
+                            "watch tick: scanned={} new={} updated={} skipped={} removed={} errors={} took={}ms",
                             stats.scanned,
                             stats.indexed_new,
                             stats.indexed_updated,
                             stats.skipped_unchanged,
                             stats.removed,
+                            stats.errors,
                             stats.duration_ms
                         );
                     }
-                    std::thread::sleep(Duration::from_secs(args.interval_secs));
                 }
             }
         },

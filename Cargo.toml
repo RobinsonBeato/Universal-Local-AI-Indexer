@@ -14,6 +14,7 @@ ctrlc = "3"
 eframe = { version = "0.30", default-features = true }
 image = "0.25"
 num_cpus = "1"
+notify = "8"
 pdf-extract = "0.7"
 quick-xml = "0.38"
 rayon = "1"

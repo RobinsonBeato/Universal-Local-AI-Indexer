@@ -61,6 +61,8 @@ cargo run -p lupa -- search "query" --json
 cargo run -p lupa -- index watch --interval-secs 2
 ```
 
+`index watch` usa eventos del filesystem + cola de `dirty paths` para reindexar sólo cambios.
+
 ### 5) Diagnóstico local
 
 ```bash

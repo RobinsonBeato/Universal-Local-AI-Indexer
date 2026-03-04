@@ -234,6 +234,122 @@ impl LupaEngine {
         })
     }
 
+    pub fn apply_dirty_paths(&self, dirty_paths: &[PathBuf]) -> Result<IndexStats> {
+        let start = Instant::now();
+        let (index, fields) = self.ensure_index()?;
+        let mut writer = self.acquire_writer_with_retry(&index)?;
+        let mut store = MetadataStore::open(&self.db_path)?;
+
+        let paths = self.collect_files_from_dirty_input(dirty_paths);
+        let mut scanned = 0usize;
+        let mut indexed_new = 0usize;
+        let mut indexed_updated = 0usize;
+        let mut skipped_unchanged = 0usize;
+        let mut removed = 0usize;
+        let mut errors = 0usize;
+
+        let mut upserts = Vec::new();
+        let mut removals = Vec::new();
+
+        for path in paths {
+            let path_str = normalize_path(&path);
+            scanned += 1;
+
+            if !path.exists() {
+                writer.delete_term(Term::from_field_text(fields.path, &path_str));
+                removals.push(path_str);
+                removed += 1;
+                continue;
+            }
+
+            if self.config.should_exclude(&path) || !path.is_file() {
+                continue;
+            }
+
+            let meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => {
+                    errors += 1;
+                    continue;
+                }
+            };
+            let mtime = match meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            {
+                Some(d) => d.as_secs() as i64,
+                None => {
+                    errors += 1;
+                    continue;
+                }
+            };
+            let size = meta.len();
+
+            let prev = store.get_record(&path_str)?;
+            if let Some(prev) = &prev {
+                if prev.mtime == mtime && prev.size == size {
+                    skipped_unchanged += 1;
+                    continue;
+                }
+            }
+
+            let snapshot = FileSnapshot {
+                path: path.clone(),
+                path_str: path_str.clone(),
+                mtime,
+                size,
+                prev,
+            };
+
+            match self.prepare_doc(&snapshot) {
+                Ok(Some(prepared_doc)) => {
+                    writer.delete_term(Term::from_field_text(
+                        fields.path,
+                        &prepared_doc.record.path,
+                    ));
+                    let doc = doc!(
+                        fields.path => prepared_doc.record.path.clone(),
+                        fields.name => prepared_doc.name,
+                        fields.content => prepared_doc.content,
+                        fields.mtime => prepared_doc.record.mtime
+                    );
+                    writer.add_document(doc)?;
+                    if prepared_doc.is_new {
+                        indexed_new += 1;
+                    } else {
+                        indexed_updated += 1;
+                    }
+                    upserts.push(prepared_doc.record);
+                }
+                Ok(None) => {
+                    skipped_unchanged += 1;
+                }
+                Err(_) => {
+                    errors += 1;
+                }
+            }
+        }
+
+        writer.commit()?;
+        if !upserts.is_empty() {
+            store.upsert_many(&upserts)?;
+        }
+        if !removals.is_empty() {
+            store.remove_many(&removals)?;
+        }
+
+        Ok(IndexStats {
+            scanned,
+            indexed_new,
+            indexed_updated,
+            skipped_unchanged,
+            removed,
+            errors,
+            duration_ms: start.elapsed().as_millis(),
+        })
+    }
+
     pub fn search(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
         let start = Instant::now();
         let (index, fields) = self.ensure_index()?;
@@ -430,6 +546,45 @@ impl LupaEngine {
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
             .collect::<Vec<_>>()
+    }
+
+    fn collect_files_from_dirty_input(&self, dirty_paths: &[PathBuf]) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+
+        for input in dirty_paths {
+            let p = if input.is_absolute() {
+                input.clone()
+            } else {
+                self.project_root.join(input)
+            };
+
+            if self.config.should_exclude(&p) {
+                continue;
+            }
+
+            if p.is_dir() {
+                for entry in WalkDir::new(&p)
+                    .into_iter()
+                    .filter_entry(|e| !self.config.should_exclude(e.path()))
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_file())
+                {
+                    let file_path = entry.path().to_path_buf();
+                    let normalized = normalize_path(&file_path);
+                    if seen.insert(normalized) {
+                        out.push(file_path);
+                    }
+                }
+            } else {
+                let normalized = normalize_path(&p);
+                if seen.insert(normalized) {
+                    out.push(p);
+                }
+            }
+        }
+
+        out
     }
 
     fn prepare_doc(&self, snapshot: &FileSnapshot) -> Result<Option<PreparedDoc>> {

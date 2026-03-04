@@ -61,6 +61,23 @@ impl MetadataStore {
         Ok(out)
     }
 
+    pub fn get_record(&self, path: &str) -> Result<Option<FileRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, mtime, size, hash, indexed_at FROM files WHERE path = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![path])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(FileRecord {
+                path: row.get(0)?,
+                mtime: row.get(1)?,
+                size: row.get(2)?,
+                hash: row.get(3)?,
+                indexed_at: row.get(4)?,
+            }));
+        }
+        Ok(None)
+    }
+
     pub fn upsert_many(&mut self, records: &[FileRecord]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {

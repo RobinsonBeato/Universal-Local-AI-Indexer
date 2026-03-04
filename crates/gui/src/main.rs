@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,6 +15,7 @@ use eframe::egui::{
 use lupa_core::{
     DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions, SearchResult,
 };
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -274,16 +275,69 @@ impl LupaApp {
         self.logs.push("Monitor de cambios iniciado".to_string());
 
         std::thread::spawn(move || {
-            while !stop_thread.load(Ordering::SeqCst) {
-                let res = run_build(&root);
-                let _ = tx.send(UiEvent::WatchTick(res));
-                for _ in 0..20 {
-                    if stop_thread.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
+            let engine = match run_engine(&root) {
+                Ok(engine) => engine,
+                Err(err) => {
+                    let _ = tx.send(UiEvent::WatchTick(Err(err.to_string())));
+                    let _ = tx.send(UiEvent::WatchStopped);
+                    return;
                 }
+            };
+
+            let watch_path = PathBuf::from(&root);
+            let (event_tx, event_rx) = mpsc::channel();
+            let mut watcher = match recommended_watcher(move |res| {
+                let _ = event_tx.send(res);
+            }) {
+                Ok(w) => w,
+                Err(err) => {
+                    let _ = tx.send(UiEvent::WatchTick(Err(format!("watch init error: {err}"))));
+                    let _ = tx.send(UiEvent::WatchStopped);
+                    return;
+                }
+            };
+
+            if let Err(err) = watcher.watch(&watch_path, RecursiveMode::Recursive) {
+                let _ = tx.send(UiEvent::WatchTick(Err(format!("watch path error: {err}"))));
+                let _ = tx.send(UiEvent::WatchStopped);
+                return;
             }
+
+            let mut dirty = HashSet::<PathBuf>::new();
+            while !stop_thread.load(Ordering::SeqCst) {
+                match event_rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(Ok(event)) => {
+                        for p in event.paths {
+                            dirty.insert(p);
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        let _ =
+                            tx.send(UiEvent::WatchTick(Err(format!("watch event error: {err}"))));
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+
+                while let Ok(Ok(event)) = event_rx.try_recv() {
+                    for p in event.paths {
+                        dirty.insert(p);
+                    }
+                }
+
+                if dirty.is_empty() {
+                    continue;
+                }
+
+                let batch = dirty.drain().collect::<Vec<_>>();
+                let res = if batch.len() > 5000 {
+                    engine.build_incremental().map_err(|e| e.to_string())
+                } else {
+                    engine.apply_dirty_paths(&batch).map_err(|e| e.to_string())
+                };
+                let _ = tx.send(UiEvent::WatchTick(res));
+            }
+
             let _ = tx.send(UiEvent::WatchStopped);
         });
     }
