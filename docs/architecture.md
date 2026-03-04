@@ -37,7 +37,7 @@
 5. Paths eliminados se borran de Tantivy y SQLite.
 
 Nota: se indexan todos los archivos por nombre/ruta. El full-text de contenido se aplica sólo a extensiones de texto configuradas.
-Además se extrae texto real de `docx`; para `pdf` la extracción es opcional con feature `lupa-core/pdf`.
+Además se extrae texto real de `docx` y `pdf` por defecto.
 
 ## Concurrency
 

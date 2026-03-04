@@ -45,15 +45,9 @@ pub fn extract_docx_text(path: &Path) -> Result<String> {
     Ok(out.trim().to_string())
 }
 
-#[cfg(feature = "pdf")]
 pub fn extract_pdf_text(path: &Path) -> Result<String> {
     pdf_extract::extract_text(path)
         .with_context(|| format!("no se pudo extraer texto pdf {}", path.display()))
-}
-
-#[cfg(not(feature = "pdf"))]
-pub fn extract_pdf_text(_path: &Path) -> Result<String> {
-    Ok(String::new())
 }
 
 fn extract_text_from_xml(xml: &str) -> Result<String> {

@@ -522,8 +522,10 @@ mod tests {
         std::fs::write(root.join("hello.txt"), "hello from lupa index")
             .expect("should write fixture file for indexing");
 
-        let mut cfg = LupaConfig::default();
-        cfg.excludes = vec![".lupa".to_string()];
+        let cfg = LupaConfig {
+            excludes: vec![".lupa".to_string()],
+            ..LupaConfig::default()
+        };
         let engine = LupaEngine::new(root.clone(), cfg).expect("should create engine");
         let stats = engine
             .build_incremental()

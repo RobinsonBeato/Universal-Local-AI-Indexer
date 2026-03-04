@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5,7 +6,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
-use eframe::egui::{self, Align, Color32, FontFamily, FontId, Key, RichText, Sense, Stroke};
+use eframe::egui::{
+    self, Align, Color32, FontFamily, FontId, Key, RichText, Sense, Stroke, TextureHandle,
+};
 use lupa_core::{
     DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions, SearchResult,
 };
@@ -15,7 +18,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1240.0, 780.0])
             .with_min_inner_size([980.0, 640.0])
-            .with_title("Lupa - Búsqueda Local"),
+            .with_title("Lupa - Bsqueda Local"),
         ..Default::default()
     };
 
@@ -99,9 +102,15 @@ struct LupaApp {
     last_build: Option<IndexStats>,
     last_search: Option<SearchResult>,
     last_doctor: Option<DoctorReport>,
+    thumbnails: HashMap<String, Thumbnail>,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
+}
+
+enum Thumbnail {
+    Image(TextureHandle),
+    Badge { label: String, color: Color32 },
 }
 
 enum UiEvent {
@@ -134,6 +143,7 @@ impl LupaApp {
             last_build: None,
             last_search: None,
             last_doctor: None,
+            thumbnails: HashMap::new(),
             tx,
             rx,
         }
@@ -238,7 +248,7 @@ impl LupaApp {
     fn stop_watch(&mut self) {
         if let Some(stop) = &self.watch.stop {
             stop.store(true, Ordering::SeqCst);
-            self.logs.push("Monitor detenéndose...".to_string());
+            self.logs.push("Monitor detenndose...".to_string());
         }
     }
 
@@ -250,7 +260,7 @@ impl LupaApp {
                     match result {
                         Ok(stats) => {
                             self.status = format!(
-                                "Índice actualizado: {} archivos analizados en {} ms",
+                                "ndice actualizado: {} archivos analizados en {} ms",
                                 stats.scanned, stats.duration_ms
                             );
                             self.logs.push(self.status.clone());
@@ -274,7 +284,7 @@ impl LupaApp {
                             self.last_search = Some(result);
                         }
                         Err(err) => {
-                            self.status = format!("Error en búsqueda: {err}");
+                            self.status = format!("Error en bsqueda: {err}");
                             self.logs.push(self.status.clone());
                         }
                     }
@@ -288,7 +298,7 @@ impl LupaApp {
                             self.last_doctor = Some(report);
                         }
                         Err(err) => {
-                            self.status = format!("Doctor falló: {err}");
+                            self.status = format!("Doctor fall: {err}");
                             self.logs.push(self.status.clone());
                         }
                     }
@@ -329,13 +339,13 @@ impl LupaApp {
                     .color(Color32::from_rgb(100, 90, 128)),
             );
             ui.add_space(8.0);
-            ui.label(RichText::new("Buscador local ultrarrápido").size(16.0));
+            ui.label(RichText::new("Buscador local ultrarrpido").size(16.0));
         });
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let search_box = egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Buscar documentos, notas, código, logs...")
+                .hint_text("Buscar documentos, notas, cdigo, logs...")
                 .desired_width(f32::INFINITY);
 
             let response = ui.add_sized([ui.available_width() - 130.0, 42.0], search_box);
@@ -360,7 +370,7 @@ impl LupaApp {
     }
 
     fn control_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Panel rápido");
+        ui.heading("Panel rpido");
         ui.add_space(4.0);
 
         ui.label("Carpeta principal");
@@ -376,7 +386,7 @@ impl LupaApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(!self.busy, egui::Button::new("Actualizar índice"))
+                .add_enabled(!self.busy, egui::Button::new("Actualizar ndice"))
                 .clicked()
             {
                 self.spawn_build();
@@ -401,7 +411,7 @@ impl LupaApp {
         }
 
         ui.separator();
-        ui.label(RichText::new("Opciones de búsqueda").strong());
+        ui.label(RichText::new("Opciones de bsqueda").strong());
         ui.add(egui::Slider::new(&mut self.limit, 5..=200).text("Resultados"));
         ui.text_edit_singleline(&mut self.path_prefix)
             .on_hover_text("Filtrar por ruta, por ejemplo: C:/Users/tu_usuario/Documents");
@@ -411,7 +421,7 @@ impl LupaApp {
 
         ui.separator();
         if let Some(stats) = &self.last_build {
-            ui.label(RichText::new("Última indexación").strong());
+            ui.label(RichText::new("ltima indexacin").strong());
             ui.monospace(format!("Analizados: {}", stats.scanned));
             ui.monospace(format!("Nuevos: {}", stats.indexed_new));
             ui.monospace(format!("Actualizados: {}", stats.indexed_updated));
@@ -421,7 +431,7 @@ impl LupaApp {
         }
     }
 
-    fn results_panel(&mut self, ui: &mut egui::Ui) {
+    fn results_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.heading("Resultados");
             if let Some(search) = &self.last_search {
@@ -437,19 +447,20 @@ impl LupaApp {
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             if let Some(result) = &self.last_search {
+                let hits = result.hits.clone();
                 if result.hits.is_empty() {
                     ui.add_space(20.0);
-                    ui.label("No hay resultados. Probá con otra palabra o actualizá el índice.");
+                    ui.label("No hay resultados. Prob con otra palabra o actualiz el ndice.");
                     return;
                 }
 
-                for (idx, hit) in result.hits.iter().enumerate() {
-                    result_row(ui, idx + 1, hit);
+                for (idx, hit) in hits.iter().enumerate() {
+                    self.result_row(ui, ctx, idx + 1, hit);
                     ui.add_space(6.0);
                 }
             } else {
                 ui.add_space(20.0);
-                ui.label("Escribí algo en la barra superior y presioná Buscar.");
+                ui.label("Escrib algo en la barra superior y presion Buscar.");
             }
         });
     }
@@ -471,6 +482,101 @@ impl LupaApp {
                 ui.label(RichText::new(line).small());
             }
         });
+    }
+
+    fn result_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, rank: usize, hit: &SearchHit) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(Color32::WHITE)
+            .rounding(egui::Rounding::same(12.0))
+            .inner_margin(egui::Margin::same(12.0))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(215, 209, 232)));
+
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                self.paint_thumbnail(ui, ctx, &hit.path);
+
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:02}", rank))
+                                    .strong()
+                                    .color(Color32::from_rgb(110, 101, 140)),
+                            );
+
+                            let name = file_name_from_path(&hit.path);
+                            let title = RichText::new(name)
+                                .size(17.0)
+                                .strong()
+                                .color(Color32::from_rgb(36, 30, 52));
+                            let response = ui.add(egui::Label::new(title).sense(Sense::click()));
+
+                            if response.double_clicked() {
+                                let _ = open_path(Path::new(&hit.path));
+                            }
+                        });
+                    });
+
+                    ui.label(
+                        RichText::new(&hit.path)
+                            .small()
+                            .color(Color32::from_rgb(88, 82, 110)),
+                    );
+
+                    if let Some(snippet) = &hit.snippet {
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new(snippet)
+                                .small()
+                                .color(Color32::from_rgb(66, 62, 84)),
+                        );
+                    }
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Abrir").clicked() {
+                            let _ = open_path(Path::new(&hit.path));
+                        }
+                        if ui.button("Carpeta").clicked() {
+                            if let Some(parent) = Path::new(&hit.path).parent() {
+                                let _ = open_path(parent);
+                            }
+                        }
+                        ui.label(RichText::new(format!("Score {:.2}", hit.score)).small());
+                    });
+                });
+            });
+        });
+    }
+
+    fn paint_thumbnail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, path: &str) {
+        let entry = self.thumbnail_for_path(ctx, path);
+        match entry {
+            Thumbnail::Image(texture) => {
+                ui.image((texture.id(), egui::vec2(56.0, 56.0)));
+            }
+            Thumbnail::Badge { label, color } => {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
+                ui.painter().rect_filled(rect, 10.0, *color);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    FontId::new(12.0, FontFamily::Proportional),
+                    Color32::from_rgb(250, 248, 255),
+                );
+            }
+        }
+    }
+
+    fn thumbnail_for_path(&mut self, ctx: &egui::Context, path: &str) -> &Thumbnail {
+        if !self.thumbnails.contains_key(path) {
+            let thumb = load_thumbnail(ctx, path);
+            self.thumbnails.insert(path.to_string(), thumb);
+        }
+        self.thumbnails
+            .get(path)
+            .expect("thumbnail should exist after insertion")
     }
 }
 
@@ -519,70 +625,11 @@ impl eframe::App for LupaApp {
                     .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
-                self.results_panel(ui);
+                self.results_panel(ui, ctx);
             });
 
         ctx.request_repaint_after(Duration::from_millis(120));
     }
-}
-
-fn result_row(ui: &mut egui::Ui, rank: usize, hit: &SearchHit) {
-    let frame = egui::Frame::group(ui.style())
-        .fill(Color32::WHITE)
-        .rounding(egui::Rounding::same(12.0))
-        .inner_margin(egui::Margin::same(12.0))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(215, 209, 232)));
-
-    frame.show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{:02}", rank))
-                        .strong()
-                        .color(Color32::from_rgb(110, 101, 140)),
-                );
-
-                let name = file_name_from_path(&hit.path);
-                let title = RichText::new(name)
-                    .size(17.0)
-                    .strong()
-                    .color(Color32::from_rgb(36, 30, 52));
-                let response = ui.add(egui::Label::new(title).sense(Sense::click()));
-
-                if response.double_clicked() {
-                    let _ = open_path(Path::new(&hit.path));
-                }
-            });
-
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Abrir").clicked() {
-                    let _ = open_path(Path::new(&hit.path));
-                }
-                if ui.button("Carpeta").clicked() {
-                    if let Some(parent) = Path::new(&hit.path).parent() {
-                        let _ = open_path(parent);
-                    }
-                }
-                ui.label(RichText::new(format!("Score {:.2}", hit.score)).small());
-            });
-        });
-
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(&hit.path)
-                .small()
-                .color(Color32::from_rgb(88, 82, 110)),
-        );
-
-        if let Some(snippet) = &hit.snippet {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(snippet)
-                    .small()
-                    .color(Color32::from_rgb(66, 62, 84)),
-            );
-        }
-    });
 }
 
 fn file_name_from_path(path: &str) -> String {
@@ -590,6 +637,58 @@ fn file_name_from_path(path: &str) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+fn load_thumbnail(ctx: &egui::Context, path: &str) -> Thumbnail {
+    let p = Path::new(path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    if is_image_extension(&ext) {
+        if let Ok(img) = image::open(p) {
+            let thumb = img.thumbnail(64, 64).to_rgba8();
+            let size = [thumb.width() as usize, thumb.height() as usize];
+            let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
+            let texture = ctx.load_texture(
+                format!("thumb:{path}"),
+                color_img,
+                egui::TextureOptions::LINEAR,
+            );
+            return Thumbnail::Image(texture);
+        }
+    }
+
+    let label = if ext.is_empty() {
+        "FILE".to_string()
+    } else {
+        ext.chars().take(4).collect::<String>().to_uppercase()
+    };
+    let color = ext_color(&ext);
+    Thumbnail::Badge { label, color }
+}
+
+fn is_image_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "ico"
+    )
+}
+
+fn ext_color(ext: &str) -> Color32 {
+    match ext {
+        "pdf" => Color32::from_rgb(173, 88, 99),
+        "doc" | "docx" => Color32::from_rgb(96, 127, 176),
+        "xls" | "xlsx" | "csv" => Color32::from_rgb(89, 150, 117),
+        "ppt" | "pptx" => Color32::from_rgb(190, 128, 92),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" => Color32::from_rgb(125, 106, 168),
+        "zip" | "rar" | "7z" => Color32::from_rgb(112, 98, 128),
+        "mp3" | "wav" | "flac" => Color32::from_rgb(115, 120, 176),
+        "mp4" | "mkv" | "mov" => Color32::from_rgb(120, 90, 145),
+        _ => Color32::from_rgb(118, 110, 142),
+    }
 }
 
 fn open_path(path: &Path) -> Result<(), String> {

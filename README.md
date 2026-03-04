@@ -15,21 +15,7 @@ Indexador y buscador local de archivos para Windows (también portable a Linux/m
 - Contenido full-text para:
   - extensiones de texto configuradas (`txt`, `md`, `log`, código, etc.)
   - `docx` (texto interno real)
-  - `pdf` con feature opcional
-
-### Habilitar extracción de PDF (opcional)
-
-CLI:
-
-```bash
-cargo run -p lupa --features lupa-core/pdf -- index build
-```
-
-GUI:
-
-```bash
-cargo run -p lupa-gui --features lupa-core/pdf
-```
+  - `pdf` (texto interno real)
 
 ## Quickstart
 
