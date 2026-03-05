@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 eframe.workspace = true
+gag.workspace = true
 image.workspace = true
 notify.workspace = true
 rfd.workspace = true

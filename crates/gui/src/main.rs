@@ -149,6 +149,9 @@ enum FileFilter {
 }
 
 struct LupaApp {
+    _stdout_hold: Option<gag::Hold>,
+    _stderr_hold: Option<gag::Hold>,
+
     root: String,
     query: String,
     limit: usize,
@@ -236,6 +239,8 @@ impl LupaApp {
             .to_string();
 
         Self {
+            _stdout_hold: gag::Hold::stdout().ok(),
+            _stderr_hold: gag::Hold::stderr().ok(),
             root,
             query: String::new(),
             limit: 20,
