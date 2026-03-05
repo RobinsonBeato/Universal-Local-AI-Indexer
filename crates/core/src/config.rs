@@ -14,6 +14,29 @@ pub struct LupaConfig {
     pub max_structured_file_size_bytes: u64,
     pub hash_small_file_threshold: u64,
     pub threads: usize,
+    pub qa: QaConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QaConfig {
+    pub mode: QaMode,
+    pub model_path: String,
+    pub max_tokens: usize,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QaMode {
+    Extractive,
+    LocalModel,
+}
+
+impl Default for QaMode {
+    fn default() -> Self {
+        Self::Extractive
+    }
 }
 
 impl Default for LupaConfig {
@@ -41,6 +64,18 @@ impl Default for LupaConfig {
             max_structured_file_size_bytes: 10 * 1024 * 1024,
             hash_small_file_threshold: 64 * 1024,
             threads: 0,
+            qa: QaConfig::default(),
+        }
+    }
+}
+
+impl Default for QaConfig {
+    fn default() -> Self {
+        Self {
+            mode: QaMode::Extractive,
+            model_path: String::new(),
+            max_tokens: 256,
+            timeout_ms: 8_000,
         }
     }
 }
