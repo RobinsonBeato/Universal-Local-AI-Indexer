@@ -206,9 +206,16 @@ struct LargePreviewData {
 
 enum SnippetState {
     Loading,
-    Ready(String),
+    Ready(SnippetData),
     Error(String),
     Unsupported,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnippetData {
+    snippet: String,
+    match_count: usize,
+    show_match_count: bool,
 }
 
 enum UiEvent {
@@ -227,7 +234,7 @@ enum UiEvent {
     },
     SnippetLoaded {
         path: String,
-        result: Result<Option<String>, String>,
+        result: Result<Option<SnippetData>, String>,
     },
     ThumbnailLoaded {
         path: String,
@@ -1174,60 +1181,59 @@ impl LupaApp {
                                 .color(Color32::from_rgb(99, 102, 241)),
                         );
                         if let Some(hit) = self.selected_hit() {
-                            if let Some(snippet) = hit.snippet {
-                                egui::ScrollArea::vertical()
-                                    .max_height(180.0)
-                                    .show(ui, |ui| {
-                                        ui.add(
-                                            egui::Label::new(RichText::new(snippet).small()).wrap(),
-                                        );
-                                    });
-                            } else {
-                                match self.snippet_cache.get(&hit.path) {
-                                    Some(SnippetState::Ready(snippet)) => {
-                                        egui::ScrollArea::vertical().max_height(180.0).show(
-                                            ui,
-                                            |ui| {
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(snippet).small(),
-                                                    )
-                                                    .wrap(),
-                                                );
-                                            },
-                                        );
-                                    }
-                                    Some(SnippetState::Loading) => {
+                            match self.snippet_cache.get(&hit.path) {
+                                Some(SnippetState::Ready(data)) => {
+                                    if data.show_match_count {
                                         ui.label(
-                                            RichText::new("Cargando fragmento...")
-                                                .small()
-                                                .color(Color32::from_rgb(140, 150, 170)),
-                                        );
-                                    }
-                                    Some(SnippetState::Error(err)) => {
-                                        ui.label(
-                                            RichText::new(format!("Snippet no disponible: {err}"))
-                                                .small()
-                                                .color(Color32::from_rgb(200, 120, 120)),
-                                        );
-                                    }
-                                    Some(SnippetState::Unsupported) => {
-                                        ui.label(
-                                            RichText::new(
-                                                "Sin fragmento para este formato o contenido.",
-                                            )
+                                            RichText::new(format!(
+                                                "Matches found: {}",
+                                                data.match_count
+                                            ))
                                             .small()
-                                            .color(Color32::from_rgb(120, 130, 155)),
+                                            .color(Color32::from_rgb(130, 140, 180)),
                                         );
                                     }
-                                    None => {
-                                        self.request_snippet(&hit.path);
-                                        ui.label(
-                                            RichText::new("Preparando fragmento...")
-                                                .small()
-                                                .color(Color32::from_rgb(140, 150, 170)),
-                                        );
-                                    }
+                                    egui::ScrollArea::vertical()
+                                        .max_height(180.0)
+                                        .show(ui, |ui| {
+                                            render_highlighted_snippet(
+                                                ui,
+                                                &data.snippet,
+                                                &self.query,
+                                                true,
+                                            );
+                                        });
+                                }
+                                Some(SnippetState::Loading) => {
+                                    ui.label(
+                                        RichText::new("Cargando fragmento...")
+                                            .small()
+                                            .color(Color32::from_rgb(140, 150, 170)),
+                                    );
+                                }
+                                Some(SnippetState::Error(err)) => {
+                                    ui.label(
+                                        RichText::new(format!("Snippet no disponible: {err}"))
+                                            .small()
+                                            .color(Color32::from_rgb(200, 120, 120)),
+                                    );
+                                }
+                                Some(SnippetState::Unsupported) => {
+                                    ui.label(
+                                        RichText::new(
+                                            "Sin fragmento para este formato o contenido.",
+                                        )
+                                        .small()
+                                        .color(Color32::from_rgb(120, 130, 155)),
+                                    );
+                                }
+                                None => {
+                                    self.request_snippet(&hit.path);
+                                    ui.label(
+                                        RichText::new("Preparando fragmento...")
+                                            .small()
+                                            .color(Color32::from_rgb(140, 150, 170)),
+                                    );
                                 }
                             }
                         }
@@ -1355,25 +1361,11 @@ impl LupaApp {
 
                     ui.add_space(2.0);
                     if let Some(snippet) = &hit.snippet {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(snippet)
-                                    .small()
-                                    .color(Color32::from_rgb(145, 155, 182)),
-                            )
-                            .truncate(),
-                        );
+                        render_highlighted_snippet(ui, snippet, &self.query, false);
                     } else {
                         match self.snippet_cache.get(&hit.path) {
-                            Some(SnippetState::Ready(snippet)) => {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(snippet)
-                                            .small()
-                                            .color(Color32::from_rgb(145, 155, 182)),
-                                    )
-                                    .truncate(),
-                                );
+                            Some(SnippetState::Ready(data)) => {
+                                render_highlighted_snippet(ui, &data.snippet, &self.query, false);
                             }
                             Some(SnippetState::Loading) => {
                                 ui.label(
@@ -1844,7 +1836,7 @@ fn load_large_preview_data(path: &str) -> Result<LargePreviewData, String> {
     })
 }
 
-fn load_snippet_data(root: &str, path: &str, query: &str) -> Result<Option<String>, String> {
+fn load_snippet_data(root: &str, path: &str, query: &str) -> Result<Option<SnippetData>, String> {
     let p = Path::new(path);
     if let Some(cache_file) = snippet_cache_file(root, p, query) {
         if cache_file.exists() {
@@ -1852,7 +1844,15 @@ fn load_snippet_data(root: &str, path: &str, query: &str) -> Result<Option<Strin
                 if cached.is_empty() {
                     return Ok(None);
                 }
-                return Ok(Some(cached));
+                if let Ok(data) = serde_json::from_str::<SnippetData>(&cached) {
+                    return Ok(Some(data));
+                }
+                // Backward compatibility with old plain-text cache format.
+                return Ok(Some(SnippetData {
+                    snippet: cached.clone(),
+                    match_count: count_occurrences_case_insensitive(&cached, query),
+                    show_match_count: is_document_or_pdf(path),
+                }));
             }
         }
     }
@@ -1906,10 +1906,17 @@ fn load_snippet_data(root: &str, path: &str, query: &str) -> Result<Option<Strin
         return Ok(None);
     }
     let snippet = make_snippet(&content, query);
+    let data = SnippetData {
+        snippet,
+        match_count: count_occurrences_case_insensitive(&content, query),
+        show_match_count: is_document_or_pdf(path),
+    };
     if let Some(cache_file) = snippet_cache_file(root, p, query) {
-        let _ = fs::write(cache_file, &snippet);
+        if let Ok(json) = serde_json::to_string(&data) {
+            let _ = fs::write(cache_file, json);
+        }
     }
-    Ok(Some(snippet))
+    Ok(Some(data))
 }
 
 fn read_text_limited(path: &Path, max_bytes: usize) -> Result<String, String> {
@@ -1945,6 +1952,92 @@ fn make_snippet(content: &str, query: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn is_document_or_pdf(path: &str) -> bool {
+    matches!(
+        extension_of(path).as_str(),
+        "pdf" | "doc" | "docx" | "odt" | "rtf"
+    )
+}
+
+fn count_occurrences_case_insensitive(content: &str, query: &str) -> usize {
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return 0;
+    }
+    let hay = content.to_ascii_lowercase();
+    let mut count = 0usize;
+    let mut from = 0usize;
+    while let Some(idx) = hay[from..].find(&q) {
+        count += 1;
+        from += idx + q.len();
+        if from >= hay.len() {
+            break;
+        }
+    }
+    count
+}
+
+fn render_highlighted_snippet(ui: &mut egui::Ui, snippet: &str, query: &str, wrap: bool) {
+    let visible = if wrap {
+        snippet.to_string()
+    } else {
+        snippet.chars().take(180).collect::<String>()
+    };
+
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        let label = egui::Label::new(
+            RichText::new(visible)
+                .small()
+                .color(Color32::from_rgb(145, 155, 182)),
+        );
+        if wrap {
+            ui.add(label.wrap());
+        } else {
+            ui.add(label.truncate());
+        }
+        return;
+    }
+
+    let lower = visible.to_ascii_lowercase();
+    let mut job = egui::text::LayoutJob::default();
+    let normal = egui::TextFormat {
+        font_id: FontId::new(12.5, FontFamily::Proportional),
+        color: Color32::from_rgb(145, 155, 182),
+        ..Default::default()
+    };
+    let highlighted = egui::TextFormat {
+        font_id: FontId::new(12.5, FontFamily::Proportional),
+        color: Color32::from_rgb(240, 245, 255),
+        background: Color32::from_rgb(90, 70, 190),
+        ..Default::default()
+    };
+
+    let mut from = 0usize;
+    while let Some(idx) = lower[from..].find(&q) {
+        let start = from + idx;
+        let end = start + q.len();
+        if start > from {
+            job.append(&visible[from..start], 0.0, normal.clone());
+        }
+        job.append(&visible[start..end], 0.0, highlighted.clone());
+        from = end;
+        if from >= visible.len() {
+            break;
+        }
+    }
+    if from < visible.len() {
+        job.append(&visible[from..], 0.0, normal);
+    }
+
+    let label = egui::Label::new(job);
+    if wrap {
+        ui.add(label.wrap());
+    } else {
+        ui.add(label.truncate());
+    }
 }
 
 fn is_image_extension(ext: &str) -> bool {

@@ -2550,6 +2550,7 @@ dependencies = [
  "lupa-core",
  "notify",
  "rfd",
+ "serde",
  "serde_json",
 ]
 
