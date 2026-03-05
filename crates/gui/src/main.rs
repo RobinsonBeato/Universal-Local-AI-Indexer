@@ -9,8 +9,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 
+use chrono::{DateTime, Local};
 use eframe::egui::{
     self, Align, Color32, CursorIcon, FontFamily, FontId, Key, RichText, Sense, Stroke,
     TextureHandle,
@@ -1087,16 +1088,25 @@ impl LupaApp {
                                 .color(Color32::WHITE),
                         );
                         ui.add(egui::Label::new(RichText::new(&preview_path).small()).wrap());
-                        let (kind, size_label, time_label) = file_meta_labels(&preview_path);
+                        let meta = file_meta_labels(&preview_path);
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
-                                RichText::new(kind)
+                                RichText::new(meta.kind.clone())
                                     .small()
                                     .color(Color32::from_rgb(130, 140, 180)),
                             );
-                            ui.label(RichText::new(size_label).small());
-                            ui.label(RichText::new(time_label).small());
+                            ui.label(RichText::new(format!("Size: {}", meta.size)).small());
                         });
+                        ui.label(
+                            RichText::new(format!("Created: {}", meta.created))
+                                .small()
+                                .color(Color32::from_rgb(140, 150, 170)),
+                        );
+                        ui.label(
+                            RichText::new(format!("Modified: {}", meta.modified))
+                                .small()
+                                .color(Color32::from_rgb(140, 150, 170)),
+                        );
 
                         ui.add_space(8.0);
                         let ext = extension_of(&preview_path);
@@ -1281,7 +1291,7 @@ impl LupaApp {
         is_selected: bool,
     ) -> bool {
         let mut row_clicked = false;
-        let (ext, size_label, time_label) = file_meta_labels(&hit.path);
+        let meta = file_meta_labels(&hit.path);
 
         let bg_color = if is_selected {
             Color32::from_rgb(40, 34, 60)
@@ -1387,7 +1397,7 @@ impl LupaApp {
                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                             .show(ui, |ui| {
                                 ui.label(
-                                    RichText::new(ext.to_uppercase())
+                                    RichText::new(meta.kind.clone())
                                         .small()
                                         .strong()
                                         .color(Color32::from_rgb(156, 163, 175)),
@@ -1396,13 +1406,13 @@ impl LupaApp {
 
                         ui.add_space(8.0);
                         ui.label(
-                            RichText::new(size_label)
+                            RichText::new(meta.size.clone())
                                 .small()
                                 .color(Color32::from_rgb(100, 116, 139)),
                         );
                         ui.add_space(12.0);
                         ui.label(
-                            RichText::new(time_label)
+                            RichText::new(format!("Mod: {}", meta.modified))
                                 .small()
                                 .color(Color32::from_rgb(100, 116, 139)),
                         );
@@ -1966,7 +1976,14 @@ fn extension_of(path: &str) -> String {
         .unwrap_or_default()
 }
 
-fn file_meta_labels(path: &str) -> (String, String, String) {
+struct FileMetaLabels {
+    kind: String,
+    size: String,
+    created: String,
+    modified: String,
+}
+
+fn file_meta_labels(path: &str) -> FileMetaLabels {
     let ext = extension_of(path);
     let kind = if ext.is_empty() {
         "FILE".to_string()
@@ -1977,16 +1994,29 @@ fn file_meta_labels(path: &str) -> (String, String, String) {
     match fs::metadata(path) {
         Ok(meta) => {
             let size = human_size(meta.len());
-            let time = meta
+            let created = meta
+                .created()
+                .ok()
+                .map(format_system_time_label)
+                .unwrap_or_else(|| "-".to_string());
+            let modified = meta
                 .modified()
                 .ok()
-                .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .map(short_time_label)
-                .unwrap_or_else(|| "--:--".to_string());
-            (kind, size, time)
+                .map(format_system_time_label)
+                .unwrap_or_else(|| "-".to_string());
+            FileMetaLabels {
+                kind,
+                size,
+                created,
+                modified,
+            }
         }
-        Err(_) => (kind, "-".to_string(), "--:--".to_string()),
+        Err(_) => FileMetaLabels {
+            kind,
+            size: "-".to_string(),
+            created: "-".to_string(),
+            modified: "-".to_string(),
+        },
     }
 }
 
@@ -2013,10 +2043,9 @@ fn format_duration_ms(ms: u128) -> String {
     format!("{mins:02}:{secs:02}")
 }
 
-fn short_time_label(unix_secs: u64) -> String {
-    let mins = (unix_secs / 60) % 60;
-    let hours = (unix_secs / 3600) % 24;
-    format!("{hours:02}:{mins:02}")
+fn format_system_time_label(ts: SystemTime) -> String {
+    let dt: DateTime<Local> = DateTime::<Local>::from(ts);
+    dt.format("%Y-%m-%d %H:%M").to_string()
 }
 
 fn matches_filter(path: &str, filter: FileFilter) -> bool {

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 eframe.workspace = true
 gag.workspace = true
 image.workspace = true
