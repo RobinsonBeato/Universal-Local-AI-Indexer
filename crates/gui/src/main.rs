@@ -1958,35 +1958,23 @@ fn open_with_dialog(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let win_path = windows_path(path);
-        let ps_path = win_path.replace('\'', "''");
-        if Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!("Start-Process -FilePath '{}' -Verb OpenAs", ps_path),
-            ])
-            .spawn()
-            .is_ok()
-        {
+        let openwith_status = Command::new("OpenWith.exe").arg(&win_path).status();
+        if openwith_status.as_ref().is_ok_and(|s| s.success()) {
             return Ok(());
         }
 
-        if Command::new("OpenWith.exe").arg(&win_path).spawn().is_ok() {
-            return Ok(());
-        }
-
-        if Command::new("cmd")
-            .args(["/C", "rundll32.exe", "shell32.dll,OpenAs_RunDLL", &win_path])
-            .spawn()
-            .is_ok()
-        {
+        let rundll_status = Command::new("rundll32.exe")
+            .args(["shell32.dll,OpenAs_RunDLL", &win_path])
+            .status();
+        if rundll_status.as_ref().is_ok_and(|s| s.success()) {
             return Ok(());
         }
 
         Err(format!(
-            "No se pudo abrir dialogo 'Abrir con' para {}",
-            path.display()
+            "No se pudo abrir dialogo 'Abrir con' para {} (openwith={:?}, rundll32={:?})",
+            path.display(),
+            openwith_status.map(|s| s.code()),
+            rundll_status.map(|s| s.code()),
         ))
     }
 
@@ -2004,10 +1992,19 @@ fn run_engine(root: &str) -> anyhow::Result<LupaEngine> {
 
 #[cfg(target_os = "windows")]
 fn windows_path(path: &Path) -> String {
-    path.canonicalize()
+    let raw = path
+        .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
-        .replace('/', "\\")
+        .replace('/', "\\");
+
+    if let Some(rest) = raw.strip_prefix("\\\\?\\UNC\\") {
+        return format!("\\\\{rest}");
+    }
+    if let Some(rest) = raw.strip_prefix("\\\\?\\") {
+        return rest.to_string();
+    }
+    raw
 }
 
 fn run_build(root: &str) -> Result<IndexStats, String> {
