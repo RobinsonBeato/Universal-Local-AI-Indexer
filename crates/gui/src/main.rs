@@ -1891,8 +1891,9 @@ fn matches_filter(path: &str, filter: FileFilter) -> bool {
 fn open_file_path(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        let win_path = windows_path(path);
         Command::new("cmd")
-            .args(["/C", "start", "", &path.to_string_lossy()])
+            .args(["/C", "start", "", &win_path])
             .spawn()
             .map_err(|e| format!("No se pudo abrir {}: {e}", path.display()))?;
         return Ok(());
@@ -1923,8 +1924,9 @@ fn open_file_path(path: &Path) -> Result<(), String> {
 fn open_folder_path(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
-            .arg(path)
+        let win_path = windows_path(path);
+        Command::new("explorer.exe")
+            .arg(win_path)
             .spawn()
             .map_err(|e| format!("No se pudo abrir carpeta {}: {e}", path.display()))?;
         return Ok(());
@@ -1955,16 +1957,37 @@ fn open_folder_path(path: &Path) -> Result<(), String> {
 fn open_with_dialog(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("rundll32.exe")
-            .args(["shell32.dll,OpenAs_RunDLL", &path.to_string_lossy()])
+        let win_path = windows_path(path);
+        let ps_path = win_path.replace('\'', "''");
+        if Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Start-Process -FilePath '{}' -Verb OpenAs", ps_path),
+            ])
             .spawn()
-            .map_err(|e| {
-                format!(
-                    "No se pudo abrir dialogo 'Abrir con' para {}: {e}",
-                    path.display()
-                )
-            })?;
-        Ok(())
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        if Command::new("OpenWith.exe").arg(&win_path).spawn().is_ok() {
+            return Ok(());
+        }
+
+        if Command::new("cmd")
+            .args(["/C", "rundll32.exe", "shell32.dll,OpenAs_RunDLL", &win_path])
+            .spawn()
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        Err(format!(
+            "No se pudo abrir dialogo 'Abrir con' para {}",
+            path.display()
+        ))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1977,6 +2000,14 @@ fn run_engine(root: &str) -> anyhow::Result<LupaEngine> {
     let root = PathBuf::from(root);
     let cfg = LupaConfig::load(&root)?;
     LupaEngine::new(root, cfg)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('/', "\\")
 }
 
 fn run_build(root: &str) -> Result<IndexStats, String> {
