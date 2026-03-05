@@ -67,8 +67,8 @@ pub fn extract_pdf_text(path: &Path) -> Result<String> {
     // pdf-extract can emit very noisy logs and has shown instability when called in parallel.
     // Serialize calls and hold stdio to keep UX clean.
     let _guard = pdf_extract_mutex().lock().ok();
-    let _stderr_hold = gag::Hold::stderr().ok();
-    let _stdout_hold = gag::Hold::stdout().ok();
+    let _stderr_gag = gag::Gag::stderr().ok();
+    let _stdout_gag = gag::Gag::stdout().ok();
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = std::panic::catch_unwind(|| pdf_extract::extract_text(path));

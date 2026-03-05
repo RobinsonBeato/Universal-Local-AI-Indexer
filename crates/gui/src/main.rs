@@ -149,8 +149,8 @@ enum FileFilter {
 }
 
 struct LupaApp {
-    _stdout_hold: Option<gag::Hold>,
-    _stderr_hold: Option<gag::Hold>,
+    _stdout_gag: Option<gag::Gag>,
+    _stderr_gag: Option<gag::Gag>,
 
     root: String,
     query: String,
@@ -160,6 +160,7 @@ struct LupaApp {
     highlight: bool,
 
     busy: bool,
+    backfill_running: bool,
     watch: WatchState,
     status: String,
     build_progress: Option<BuildProgress>,
@@ -212,6 +213,9 @@ enum SnippetState {
 enum UiEvent {
     BuildProgress(BuildProgress),
     BuildDone(Result<IndexStats, String>),
+    BackfillStarted,
+    BackfillProgress(BuildProgress),
+    BackfillDone(Result<IndexStats, String>),
     SearchDone(Result<SearchResult, String>),
     DoctorDone(Result<DoctorReport, String>),
     WatchTick(Result<IndexStats, String>),
@@ -239,8 +243,8 @@ impl LupaApp {
             .to_string();
 
         Self {
-            _stdout_hold: gag::Hold::stdout().ok(),
-            _stderr_hold: gag::Hold::stderr().ok(),
+            _stdout_gag: gag::Gag::stdout().ok(),
+            _stderr_gag: gag::Gag::stderr().ok(),
             root,
             query: String::new(),
             limit: 20,
@@ -248,6 +252,7 @@ impl LupaApp {
             regex: String::new(),
             highlight: false,
             busy: false,
+            backfill_running: false,
             watch: WatchState::default(),
             status: "Listo para buscar".to_string(),
             build_progress: None,
@@ -268,6 +273,10 @@ impl LupaApp {
     }
 
     fn spawn_build(&mut self) {
+        if self.backfill_running {
+            self.status = "Deep indexing already running...".to_string();
+            return;
+        }
         let root = self.root.clone();
         let tx = self.tx.clone();
         self.busy = true;
@@ -278,12 +287,20 @@ impl LupaApp {
 
         std::thread::spawn(move || {
             let res = run_engine(&root).and_then(|engine| {
-                engine.build_incremental_with_progress(|progress| {
+                engine.build_metadata_only_with_progress(|progress| {
                     let _ = tx.send(UiEvent::BuildProgress(progress));
                 })
             });
             let res = res.map_err(|e| e.to_string());
             let _ = tx.send(UiEvent::BuildDone(res));
+
+            let _ = tx.send(UiEvent::BackfillStarted);
+            let backfill = run_engine(&root).and_then(|engine| {
+                engine.backfill_content_with_progress(|progress| {
+                    let _ = tx.send(UiEvent::BackfillProgress(progress));
+                })
+            });
+            let _ = tx.send(UiEvent::BackfillDone(backfill.map_err(|e| e.to_string())));
         });
     }
 
@@ -497,12 +514,10 @@ impl LupaApp {
                 }
                 UiEvent::BuildDone(result) => {
                     self.busy = false;
-                    self.build_progress = None;
-                    self.build_started_at = None;
                     match result {
                         Ok(stats) => {
                             self.status = format!(
-                                "ndice actualizado: {} archivos analizados en {} ms",
+                                "Fast index ready: {} files scanned in {} ms",
                                 stats.scanned, stats.duration_ms
                             );
                             self.logs.push(self.status.clone());
@@ -510,6 +525,48 @@ impl LupaApp {
                         }
                         Err(err) => {
                             self.status = format!("Error al indexar: {err}");
+                            self.logs.push(self.status.clone());
+                        }
+                    }
+                }
+                UiEvent::BackfillStarted => {
+                    self.backfill_running = true;
+                    self.build_started_at = Some(Instant::now());
+                    self.build_progress = None;
+                    self.status = "Deep indexing in background...".to_string();
+                    self.logs.push("Deep indexing started".to_string());
+                }
+                UiEvent::BackfillProgress(progress) => {
+                    self.build_progress = Some(progress.clone());
+                    let percent = if progress.total_files > 0 {
+                        (progress.scanned as f64 * 100.0 / progress.total_files as f64).min(100.0)
+                    } else {
+                        0.0
+                    };
+                    let eta = progress
+                        .eta_ms
+                        .map(format_duration_ms)
+                        .unwrap_or_else(|| "--:--".to_string());
+                    self.status = format!(
+                        "Deep indexing {:.1}% ({}/{}) eta {}",
+                        percent, progress.scanned, progress.total_files, eta
+                    );
+                }
+                UiEvent::BackfillDone(result) => {
+                    self.backfill_running = false;
+                    self.build_progress = None;
+                    self.build_started_at = None;
+                    match result {
+                        Ok(stats) => {
+                            self.status = format!(
+                                "Deep indexing complete: updated {} in {} ms",
+                                stats.indexed_updated, stats.duration_ms
+                            );
+                            self.logs.push(self.status.clone());
+                            self.last_build = Some(stats);
+                        }
+                        Err(err) => {
+                            self.status = format!("Deep indexing error: {err}");
                             self.logs.push(self.status.clone());
                         }
                     }
@@ -654,7 +711,7 @@ impl LupaApp {
                 self.spawn_search();
             }
 
-            let status_text = if self.busy {
+            let status_text = if self.busy || self.backfill_running {
                 if let Some(p) = &self.build_progress {
                     let percent = if p.total_files > 0 {
                         (p.scanned as f64 * 100.0 / p.total_files as f64).min(100.0)
@@ -669,9 +726,18 @@ impl LupaApp {
                         .eta_ms
                         .map(format_duration_ms)
                         .unwrap_or_else(|| "--:--".to_string());
-                    format!("Indexing {:.1}% start+{} eta {}", percent, started, eta)
+                    let phase = if self.backfill_running {
+                        "Deep indexing"
+                    } else {
+                        "Indexing"
+                    };
+                    format!("{phase} {:.1}% start+{} eta {}", percent, started, eta)
                 } else {
-                    "Indexing".to_string()
+                    if self.backfill_running {
+                        "Deep indexing".to_string()
+                    } else {
+                        "Indexing".to_string()
+                    }
                 }
             } else if self.watch.running {
                 "Monitoring".to_string()
@@ -715,7 +781,7 @@ impl LupaApp {
                 let full_w = ui.available_width();
                 if ui
                     .add_enabled(
-                        !self.busy && !self.watch.running,
+                        !self.busy && !self.watch.running && !self.backfill_running,
                         egui::Button::new("\u{26A1}  Build Index")
                             .min_size(egui::vec2(full_w, 34.0)),
                     )
@@ -726,7 +792,7 @@ impl LupaApp {
                 if !self.watch.running {
                     if ui
                         .add_enabled(
-                            !self.busy,
+                            !self.busy && !self.backfill_running,
                             egui::Button::new("\u{1F441}  Start Monitor")
                                 .min_size(egui::vec2(full_w, 34.0)),
                         )
@@ -745,7 +811,7 @@ impl LupaApp {
                 }
                 if ui
                     .add_enabled(
-                        !self.busy,
+                        !self.busy && !self.backfill_running,
                         egui::Button::new("\u{1FA7A}  System Doctor")
                             .min_size(egui::vec2(full_w, 34.0)),
                     )

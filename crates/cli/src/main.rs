@@ -35,6 +35,7 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum IndexSubcommand {
     Build(IndexBuildArgs),
+    Backfill(IndexBuildArgs),
     Watch(IndexWatchArgs),
 }
 
@@ -108,9 +109,9 @@ fn main() -> Result<()> {
         Commands::Index(index_cmd) => match index_cmd.command {
             IndexSubcommand::Build(args) => {
                 let stats = if args.json {
-                    engine.build_incremental()?
+                    engine.build_metadata_only_with_progress(|_| {})?
                 } else {
-                    engine.build_incremental_with_progress(|p| {
+                    engine.build_metadata_only_with_progress(|p| {
                         render_build_progress(&p);
                     })?
                 };
@@ -119,7 +120,31 @@ fn main() -> Result<()> {
                 } else {
                     println!();
                     println!(
-                        "index build: scanned={} new={} updated={} skipped={} removed={} took={}ms",
+                        "index build (fast metadata): scanned={} new={} updated={} skipped={} removed={} took={}ms",
+                        stats.scanned,
+                        stats.indexed_new,
+                        stats.indexed_updated,
+                        stats.skipped_unchanged,
+                        stats.removed,
+                        stats.duration_ms
+                    );
+                    println!("tip: run `lupa index backfill` to complete deep content indexing");
+                }
+            }
+            IndexSubcommand::Backfill(args) => {
+                let stats = if args.json {
+                    engine.backfill_content_with_progress(|_| {})?
+                } else {
+                    engine.backfill_content_with_progress(|p| {
+                        render_build_progress(&p);
+                    })?
+                };
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&stats)?);
+                } else {
+                    println!();
+                    println!(
+                        "index backfill (content): scanned={} new={} updated={} skipped={} removed={} took={}ms",
                         stats.scanned,
                         stats.indexed_new,
                         stats.indexed_updated,

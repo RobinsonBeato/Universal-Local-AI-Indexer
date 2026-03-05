@@ -123,6 +123,13 @@ struct PreparedDoc {
     is_new: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    Full,
+    MetadataOnly,
+    ContentBackfill,
+}
+
 impl LupaEngine {
     pub fn new(project_root: PathBuf, config: LupaConfig) -> Result<Self> {
         let data_dir = LupaConfig::data_dir(&project_root);
@@ -148,6 +155,27 @@ impl LupaEngine {
     where
         F: FnMut(BuildProgress),
     {
+        self.build_with_progress(BuildMode::Full, &mut on_progress)
+    }
+
+    pub fn build_metadata_only_with_progress<F>(&self, mut on_progress: F) -> Result<IndexStats>
+    where
+        F: FnMut(BuildProgress),
+    {
+        self.build_with_progress(BuildMode::MetadataOnly, &mut on_progress)
+    }
+
+    pub fn backfill_content_with_progress<F>(&self, mut on_progress: F) -> Result<IndexStats>
+    where
+        F: FnMut(BuildProgress),
+    {
+        self.build_with_progress(BuildMode::ContentBackfill, &mut on_progress)
+    }
+
+    fn build_with_progress<F>(&self, mode: BuildMode, on_progress: &mut F) -> Result<IndexStats>
+    where
+        F: FnMut(BuildProgress),
+    {
         let start = Instant::now();
         let (index, fields) = self.ensure_index()?;
         let mut writer = self.acquire_writer_with_retry(&index)?;
@@ -167,7 +195,7 @@ impl LupaEngine {
         let total_files = self.count_files_for_build();
         let mut last_progress_emit = Instant::now();
 
-        const SNAPSHOT_BATCH_SIZE: usize = 256;
+        const SNAPSHOT_BATCH_SIZE: usize = 64;
         let mut snapshots = Vec::with_capacity(SNAPSHOT_BATCH_SIZE);
 
         for entry in WalkDir::new(&self.project_root)
@@ -203,13 +231,33 @@ impl LupaEngine {
             let prev = existing_records.remove(&path_str);
 
             scanned += 1;
-            if prev
+            let unchanged = prev
                 .as_ref()
-                .is_some_and(|p| p.mtime == mtime && p.size == size)
+                .is_some_and(|p| p.mtime == mtime && p.size == size);
+            if unchanged && mode != BuildMode::ContentBackfill {
+                skipped_unchanged += 1;
+                Self::emit_build_progress(
+                    on_progress,
+                    &start,
+                    &mut last_progress_emit,
+                    false,
+                    scanned,
+                    total_files,
+                    indexed_new,
+                    indexed_updated,
+                    skipped_unchanged,
+                    removed,
+                    errors,
+                );
+                continue;
+            }
+
+            if mode == BuildMode::ContentBackfill
+                && !self.config.allows_content_extract(&path, size)
             {
                 skipped_unchanged += 1;
                 Self::emit_build_progress(
-                    &mut on_progress,
+                    on_progress,
                     &start,
                     &mut last_progress_emit,
                     false,
@@ -233,7 +281,7 @@ impl LupaEngine {
             });
 
             Self::emit_build_progress(
-                &mut on_progress,
+                on_progress,
                 &start,
                 &mut last_progress_emit,
                 false,
@@ -247,14 +295,14 @@ impl LupaEngine {
             );
 
             if snapshots.len() >= SNAPSHOT_BATCH_SIZE {
-                let (new_count, updated_count, skipped_count, error_count) =
-                    self.flush_snapshot_batch(&mut writer, &fields, &mut store, &mut snapshots)?;
+                let (new_count, updated_count, skipped_count, error_count) = self
+                    .flush_snapshot_batch(mode, &mut writer, &fields, &mut store, &mut snapshots)?;
                 indexed_new += new_count;
                 indexed_updated += updated_count;
                 skipped_unchanged += skipped_count;
                 errors += error_count;
                 Self::emit_build_progress(
-                    &mut on_progress,
+                    on_progress,
                     &start,
                     &mut last_progress_emit,
                     false,
@@ -271,13 +319,13 @@ impl LupaEngine {
 
         if !snapshots.is_empty() {
             let (new_count, updated_count, skipped_count, error_count) =
-                self.flush_snapshot_batch(&mut writer, &fields, &mut store, &mut snapshots)?;
+                self.flush_snapshot_batch(mode, &mut writer, &fields, &mut store, &mut snapshots)?;
             indexed_new += new_count;
             indexed_updated += updated_count;
             skipped_unchanged += skipped_count;
             errors += error_count;
             Self::emit_build_progress(
-                &mut on_progress,
+                on_progress,
                 &start,
                 &mut last_progress_emit,
                 false,
@@ -301,7 +349,7 @@ impl LupaEngine {
             store.remove_many(chunk)?;
             removed += chunk.len();
             Self::emit_build_progress(
-                &mut on_progress,
+                on_progress,
                 &start,
                 &mut last_progress_emit,
                 false,
@@ -315,7 +363,7 @@ impl LupaEngine {
             );
         }
         Self::emit_build_progress(
-            &mut on_progress,
+            on_progress,
             &start,
             &mut last_progress_emit,
             true,
@@ -411,7 +459,7 @@ impl LupaEngine {
 
         let prepared_results = snapshots
             .par_iter()
-            .map(|snapshot| self.prepare_doc(snapshot))
+            .map(|snapshot| self.prepare_doc(snapshot, BuildMode::Full))
             .collect::<Vec<_>>();
 
         for result in prepared_results {
@@ -634,6 +682,7 @@ impl LupaEngine {
 
     fn flush_snapshot_batch(
         &self,
+        mode: BuildMode,
         writer: &mut tantivy::IndexWriter,
         fields: &Fields,
         store: &mut MetadataStore,
@@ -641,7 +690,7 @@ impl LupaEngine {
     ) -> Result<(usize, usize, usize, usize)> {
         let prepared_results = snapshots
             .par_iter()
-            .map(|snapshot| self.prepare_doc(snapshot))
+            .map(|snapshot| self.prepare_doc(snapshot, mode))
             .collect::<Vec<_>>();
 
         let mut indexed_new = 0usize;
@@ -753,7 +802,7 @@ impl LupaEngine {
     ) where
         F: FnMut(BuildProgress),
     {
-        if !force && last_emit.elapsed().as_millis() < 250 {
+        if !force && last_emit.elapsed().as_millis() < 120 {
             return;
         }
         *last_emit = Instant::now();
@@ -777,35 +826,46 @@ impl LupaEngine {
         });
     }
 
-    fn prepare_doc(&self, snapshot: &FileSnapshot) -> Result<Option<PreparedDoc>> {
+    fn prepare_doc(&self, snapshot: &FileSnapshot, mode: BuildMode) -> Result<Option<PreparedDoc>> {
         let name = snapshot
             .path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| snapshot.path_str.clone());
 
+        let use_hash_dedupe = mode == BuildMode::Full;
+        let extract_content = mode != BuildMode::MetadataOnly;
         let mut hash = None;
         let mut content = String::new();
         let mut preloaded_bytes = None;
 
-        if snapshot.prev.is_some() && snapshot.size <= self.config.hash_small_file_threshold {
+        if use_hash_dedupe
+            && snapshot.prev.is_some()
+            && snapshot.size <= self.config.hash_small_file_threshold
+        {
             let bytes = std::fs::read(&snapshot.path)
                 .with_context(|| format!("no se pudo leer {}", snapshot.path.display()))?;
             hash = Some(format!("{:x}", xxh3_64(&bytes)));
             preloaded_bytes = Some(bytes);
         }
 
-        if let Some(prev) = &snapshot.prev {
-            if hash.is_some() && prev.hash == hash {
-                return Ok(None);
+        if use_hash_dedupe {
+            if let Some(prev) = &snapshot.prev {
+                if hash.is_some() && prev.hash == hash {
+                    return Ok(None);
+                }
             }
         }
 
-        if self
-            .config
-            .allows_content_extract(&snapshot.path, snapshot.size)
+        if extract_content
+            && self
+                .config
+                .allows_content_extract(&snapshot.path, snapshot.size)
         {
             content = self.extract_indexable_content(&snapshot.path, preloaded_bytes.as_deref())?;
+        } else if mode == BuildMode::ContentBackfill {
+            // Backfill mode should not modify non-indexable content payloads.
+            content.clear();
         }
 
         let now = std::time::SystemTime::now()
