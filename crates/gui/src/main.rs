@@ -310,6 +310,51 @@ impl LupaApp {
         }
     }
 
+    fn send_doc_chat_question(&mut self) {
+        let question = self.doc_chat_input.trim().to_string();
+        if question.is_empty() {
+            return;
+        }
+        self.doc_chat_messages.push(format!("You: {question}"));
+        self.doc_chat_input.clear();
+
+        let Some(path) = self.selected_path.clone() else {
+            self.doc_chat_messages
+                .push("Assistant: No selected document.".to_string());
+            return;
+        };
+
+        let hit_snippet = self.selected_hit().and_then(|h| h.snippet);
+        let cached_snippet = match self.snippet_cache.get(&path) {
+            Some(SnippetState::Ready(data)) => Some(data.snippet.clone()),
+            Some(SnippetState::Loading) => {
+                self.doc_chat_messages
+                    .push("Assistant: Loading document snippet, try again in a second."
+                        .to_string());
+                return;
+            }
+            Some(SnippetState::Error(err)) => {
+                self.doc_chat_messages
+                    .push(format!("Assistant: Snippet error: {err}"));
+                return;
+            }
+            Some(SnippetState::Unsupported) => None,
+            None => {
+                self.request_snippet(&path);
+                self.doc_chat_messages.push(
+                    "Assistant: Preparing snippet in background. Ask again in a moment."
+                        .to_string(),
+                );
+                return;
+            }
+        };
+
+        let snippet = hit_snippet.or(cached_snippet);
+        let meta = file_meta_labels(&path);
+        let answer = make_extract_answer(&question, &path, &meta, snippet.as_deref());
+        self.doc_chat_messages.push(format!("Assistant: {answer}"));
+    }
+
     fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let root = std::env::current_dir()
@@ -1676,21 +1721,14 @@ impl LupaApp {
                     });
 
                 ui.add_space(8.0);
-                ui.add(
+                let input = ui.add(
                     egui::TextEdit::singleline(&mut self.doc_chat_input)
-                        .hint_text("Ask about this document (demo mode)..."),
+                        .hint_text("Ask about this document (local extractive mode)..."),
                 );
+                let enter_pressed = input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Send").clicked() {
-                        let q = self.doc_chat_input.trim().to_string();
-                        if !q.is_empty() {
-                            self.doc_chat_messages.push(format!("You: {q}"));
-                            self.doc_chat_messages.push(
-                                "Assistant (demo): AI is not enabled yet. This panel is ready for local document Q&A integration."
-                                    .to_string(),
-                            );
-                            self.doc_chat_input.clear();
-                        }
+                    if ui.button("Send").clicked() || enter_pressed {
+                        self.send_doc_chat_question();
                     }
                     if ui.button("Back to preview").clicked() {
                         self.close_doc_chat_panel();
@@ -2413,6 +2451,90 @@ fn count_occurrences_case_insensitive(content: &str, query: &str) -> usize {
         }
     }
     count
+}
+
+fn make_extract_answer(
+    question: &str,
+    path: &str,
+    meta: &FileMetaLabels,
+    snippet: Option<&str>,
+) -> String {
+    let q = question.to_ascii_lowercase();
+    if q.contains("created")
+        || q.contains("creado")
+        || q.contains("fecha de creacion")
+        || q.contains("creation date")
+    {
+        return format!("Created: {} (source: {})", meta.created, file_name_from_path(path));
+    }
+    if q.contains("modified")
+        || q.contains("modificado")
+        || q.contains("ultima modificacion")
+        || q.contains("last modified")
+    {
+        return format!(
+            "Modified: {} (source: {})",
+            meta.modified,
+            file_name_from_path(path)
+        );
+    }
+    if q.contains("size") || q.contains("tamano") || q.contains("peso") {
+        return format!("Size: {} (source: {})", meta.size, file_name_from_path(path));
+    }
+
+    let Some(snippet) = snippet else {
+        return "I do not have extracted text yet for this file. Try again after snippet loads."
+            .to_string();
+    };
+    let clean = snippet.replace('\n', " ");
+    let sentences = split_sentences(&clean);
+    if sentences.is_empty() {
+        return "No textual content available to answer this question.".to_string();
+    }
+    let keywords = extract_keywords(question);
+    if keywords.is_empty() {
+        return format!(
+            "{} (source: {})",
+            sentences[0].trim(),
+            file_name_from_path(path)
+        );
+    }
+    let mut best = sentences[0].trim().to_string();
+    let mut best_score = 0usize;
+    for s in &sentences {
+        let lower = s.to_ascii_lowercase();
+        let score = keywords.iter().filter(|k| lower.contains(*k)).count();
+        if score > best_score {
+            best_score = score;
+            best = s.trim().to_string();
+        }
+    }
+    if best_score == 0 {
+        best = sentences[0].trim().to_string();
+    }
+    format!("{} (source: {})", best, file_name_from_path(path))
+}
+
+fn split_sentences(text: &str) -> Vec<String> {
+    text.split(['.', '!', '?', ';', '\n'])
+        .map(str::trim)
+        .filter(|s| s.len() >= 20)
+        .take(12)
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn extract_keywords(question: &str) -> Vec<String> {
+    let stop = [
+        "the", "and", "for", "with", "from", "that", "this", "what", "where", "when", "como",
+        "para", "con", "del", "las", "los", "que", "una", "uno", "sobre", "donde", "cual",
+    ];
+    question
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.trim().to_ascii_lowercase())
+        .filter(|w| w.len() >= 3 && !stop.contains(&w.as_str()))
+        .take(10)
+        .collect()
 }
 
 fn render_highlighted_snippet(ui: &mut egui::Ui, snippet: &str, query: &str, wrap: bool) {
