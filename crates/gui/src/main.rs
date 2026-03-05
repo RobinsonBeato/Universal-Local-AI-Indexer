@@ -291,9 +291,13 @@ impl LupaApp {
         self.doc_chat_input.clear();
         self.doc_chat_messages.clear();
         self.doc_chat_messages.push(format!(
-            "Assistant (demo): Ask about '{}'.",
+            "Assistant: Ready. Ask about '{}'.",
             file_name_from_path(&path)
         ));
+        self.doc_chat_messages.push(
+            "Assistant: I can answer from extracted snippets and file metadata in local mode."
+                .to_string(),
+        );
     }
 
     fn close_doc_chat_panel(&mut self) {
@@ -1681,59 +1685,172 @@ impl LupaApp {
     fn doc_chat_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 10.0;
         egui::Frame::none()
-            .fill(Color32::from_rgb(20, 20, 30))
+            .fill(Color32::from_rgb(14, 15, 24))
             .rounding(egui::Rounding::same(16.0))
-            .inner_margin(egui::Margin::same(16.0))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(35, 38, 58)))
+            .inner_margin(egui::Margin::same(14.0))
             .show(ui, |ui| {
                 let title = self
                     .doc_chat_path
                     .as_ref()
                     .map(|p| file_name_from_path(p))
                     .unwrap_or_else(|| "Document".to_string());
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("DOC CHAT (Demo)")
-                            .small()
-                            .strong()
-                            .color(Color32::from_rgb(99, 102, 241)),
-                    );
-                    ui.separator();
-                    ui.label(
-                        RichText::new(title)
-                            .small()
-                            .color(Color32::from_rgb(195, 202, 230)),
-                    );
-                });
+                let path_label = self.doc_chat_path.clone().unwrap_or_default();
 
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .max_height(380.0)
+                // Header
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(20, 22, 34))
+                    .rounding(egui::Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
-                        for msg in &self.doc_chat_messages {
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(
-                                RichText::new(msg)
+                                RichText::new("DOC CHAT")
                                     .small()
-                                    .color(Color32::from_rgb(214, 220, 243)),
+                                    .strong()
+                                    .color(Color32::from_rgb(129, 140, 248)),
                             );
-                            ui.add_space(4.0);
-                        }
+                            ui.separator();
+                            ui.label(
+                                RichText::new("Local Extractive")
+                                    .small()
+                                    .color(Color32::from_rgb(160, 169, 199)),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                if ui
+                                    .add_sized([110.0, 26.0], egui::Button::new("Back to preview"))
+                                    .clicked()
+                                {
+                                    self.close_doc_chat_panel();
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(title)
+                                .strong()
+                                .color(Color32::from_rgb(235, 239, 255)),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(path_label)
+                                    .small()
+                                    .color(Color32::from_rgb(128, 138, 170)),
+                            )
+                            .truncate(),
+                        );
                     });
 
                 ui.add_space(8.0);
-                let input = ui.add(
-                    egui::TextEdit::singleline(&mut self.doc_chat_input)
-                        .hint_text("Ask about this document (local extractive mode)..."),
-                );
-                let enter_pressed = input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Send").clicked() || enter_pressed {
-                        self.send_doc_chat_question();
+                    if ui
+                        .add_sized([108.0, 24.0], egui::Button::new("Summary"))
+                        .clicked()
+                    {
+                        self.doc_chat_input = "Summarize this document".to_string();
                     }
-                    if ui.button("Back to preview").clicked() {
-                        self.close_doc_chat_panel();
+                    if ui
+                        .add_sized([102.0, 24.0], egui::Button::new("Key dates"))
+                        .clicked()
+                    {
+                        self.doc_chat_input = "When was it created and modified?".to_string();
+                    }
+                    if ui
+                        .add_sized([114.0, 24.0], egui::Button::new("Main topic"))
+                        .clicked()
+                    {
+                        self.doc_chat_input = "What is the main topic?".to_string();
                     }
                 });
+
+                ui.add_space(8.0);
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(12, 13, 20))
+                    .rounding(egui::Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 8.0))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .max_height(340.0)
+                            .show(ui, |ui| {
+                                for msg in &self.doc_chat_messages {
+                                    let (is_user, body) = if let Some(rest) = msg.strip_prefix("You: ")
+                                    {
+                                        (true, rest)
+                                    } else if let Some(rest) = msg.strip_prefix("Assistant: ") {
+                                        (false, rest)
+                                    } else {
+                                        (false, msg.as_str())
+                                    };
+
+                                    let bubble_fill = if is_user {
+                                        Color32::from_rgb(69, 76, 138)
+                                    } else {
+                                        Color32::from_rgb(28, 30, 45)
+                                    };
+                                    let bubble_stroke = if is_user {
+                                        Color32::from_rgb(114, 124, 230)
+                                    } else {
+                                        Color32::from_rgb(44, 48, 72)
+                                    };
+
+                                    ui.with_layout(
+                                        if is_user {
+                                            egui::Layout::right_to_left(Align::TOP)
+                                        } else {
+                                            egui::Layout::left_to_right(Align::TOP)
+                                        },
+                                        |ui| {
+                                            egui::Frame::none()
+                                                .fill(bubble_fill)
+                                                .stroke(Stroke::new(1.0, bubble_stroke))
+                                                .rounding(egui::Rounding::same(12.0))
+                                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                                .show(ui, |ui| {
+                                                    ui.set_max_width((ui.available_width() * 0.9).max(160.0));
+                                                    ui.label(
+                                                        RichText::new(body)
+                                                            .small()
+                                                            .color(Color32::from_rgb(228, 234, 255)),
+                                                    );
+                                                });
+                                        },
+                                    );
+                                    ui.add_space(6.0);
+                                }
+                            });
+                    });
+
+                ui.add_space(8.0);
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(20, 22, 34))
+                    .rounding(egui::Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                    .show(ui, |ui| {
+                        let input = ui.add(
+                            egui::TextEdit::singleline(&mut self.doc_chat_input)
+                                .hint_text("Ask about this document...")
+                                .desired_width(f32::INFINITY),
+                        );
+                        let enter_pressed =
+                            input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized([76.0, 28.0], egui::Button::new("Send"))
+                                .clicked()
+                                || enter_pressed
+                            {
+                                self.send_doc_chat_question();
+                            }
+                            if ui
+                                .add_sized([88.0, 28.0], egui::Button::new("Clear"))
+                                .clicked()
+                            {
+                                self.doc_chat_messages.clear();
+                            }
+                        });
+                    });
             });
     }
 
