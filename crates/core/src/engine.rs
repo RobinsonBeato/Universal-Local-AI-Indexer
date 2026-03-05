@@ -208,6 +208,19 @@ impl LupaEngine {
                 .is_some_and(|p| p.mtime == mtime && p.size == size)
             {
                 skipped_unchanged += 1;
+                Self::emit_build_progress(
+                    &mut on_progress,
+                    &start,
+                    &mut last_progress_emit,
+                    false,
+                    scanned,
+                    total_files,
+                    indexed_new,
+                    indexed_updated,
+                    skipped_unchanged,
+                    removed,
+                    errors,
+                );
                 continue;
             }
 
@@ -218,6 +231,20 @@ impl LupaEngine {
                 size,
                 prev,
             });
+
+            Self::emit_build_progress(
+                &mut on_progress,
+                &start,
+                &mut last_progress_emit,
+                false,
+                scanned,
+                total_files,
+                indexed_new,
+                indexed_updated,
+                skipped_unchanged,
+                removed,
+                errors,
+            );
 
             if snapshots.len() >= SNAPSHOT_BATCH_SIZE {
                 let (new_count, updated_count, skipped_count, error_count) =

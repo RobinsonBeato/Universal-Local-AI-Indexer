@@ -69,8 +69,21 @@ pub fn extract_pdf_text(path: &Path) -> Result<String> {
     let _guard = pdf_extract_mutex().lock().ok();
     let _stderr_hold = gag::Hold::stderr().ok();
     let _stdout_hold = gag::Hold::stdout().ok();
-    pdf_extract::extract_text(path)
-        .with_context(|| format!("failed to extract pdf text {}", path.display()))
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(|| pdf_extract::extract_text(path));
+    std::panic::set_hook(prev_hook);
+
+    match result {
+        Ok(Ok(text)) => Ok(text),
+        Ok(Err(err)) => {
+            Err(err).with_context(|| format!("failed to extract pdf text {}", path.display()))
+        }
+        Err(_) => Err(anyhow::anyhow!(
+            "pdf text extraction panicked for {}",
+            path.display()
+        )),
+    }
 }
 
 fn extract_text_from_xml(xml: &str) -> Result<String> {
