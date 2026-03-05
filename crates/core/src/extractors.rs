@@ -1,10 +1,16 @@
 use std::io::Read;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use zip::ZipArchive;
+
+fn pdf_extract_mutex() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 pub fn extract_docx_text(path: &Path) -> Result<String> {
     let file = std::fs::File::open(path)
@@ -58,11 +64,13 @@ pub fn extract_docx_text(path: &Path) -> Result<String> {
 }
 
 pub fn extract_pdf_text(path: &Path) -> Result<String> {
-    // Some PDFs emit noisy glyph warnings to stderr from downstream parsers.
-    // Hold stderr during extraction to keep CLI/GUI output clean.
+    // pdf-extract can emit very noisy logs and has shown instability when called in parallel.
+    // Serialize calls and hold stdio to keep UX clean.
+    let _guard = pdf_extract_mutex().lock().ok();
     let _stderr_hold = gag::Hold::stderr().ok();
+    let _stdout_hold = gag::Hold::stdout().ok();
     pdf_extract::extract_text(path)
-        .with_context(|| format!("no se pudo extraer texto pdf {}", path.display()))
+        .with_context(|| format!("failed to extract pdf text {}", path.display()))
 }
 
 fn extract_text_from_xml(xml: &str) -> Result<String> {

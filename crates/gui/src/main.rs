@@ -178,6 +178,7 @@ struct LupaApp {
 }
 
 enum Thumbnail {
+    Loading,
     Image(TextureHandle),
     Badge { label: String, color: Color32 },
 }
@@ -219,6 +220,10 @@ enum UiEvent {
     SnippetLoaded {
         path: String,
         result: Result<Option<String>, String>,
+    },
+    ThumbnailLoaded {
+        path: String,
+        result: Result<LargePreviewData, String>,
     },
 }
 
@@ -590,6 +595,25 @@ impl LupaApp {
                         self.snippet_cache.insert(path, SnippetState::Error(err));
                     }
                 },
+                UiEvent::ThumbnailLoaded { path, result } => match result {
+                    Ok(data) => {
+                        if let Some(image) = data.image {
+                            let texture = ctx.load_texture(
+                                format!("thumb:{path}"),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.thumbnails.insert(path, Thumbnail::Image(texture));
+                        } else {
+                            self.thumbnails
+                                .insert(path.clone(), make_badge_thumbnail(&path));
+                        }
+                    }
+                    Err(_) => {
+                        self.thumbnails
+                            .insert(path.clone(), make_badge_thumbnail(&path));
+                    }
+                },
             }
 
             if self.logs.len() > 220 {
@@ -916,8 +940,8 @@ impl LupaApp {
                 self.selected_path = hits.first().map(|h| h.path.clone());
             }
 
-            // Warm up snippets for first visible/top results to improve perceived latency.
-            for hit in hits.iter().take(12) {
+            // Warm up only a few top snippets to avoid scroll jank on heavy formats.
+            for hit in hits.iter().take(4) {
                 if hit.snippet.is_none() {
                     self.request_snippet(&hit.path);
                 }
@@ -1278,9 +1302,7 @@ impl LupaApp {
                                 );
                             }
                             Some(SnippetState::Error(_)) | Some(SnippetState::Unsupported) => {}
-                            None => {
-                                self.request_snippet(&hit.path);
-                            }
+                            None => {}
                         }
                     }
 
@@ -1363,6 +1385,16 @@ impl LupaApp {
     fn paint_thumbnail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, path: &str) {
         let entry = self.thumbnail_for_path(ctx, path);
         match entry {
+            Thumbnail::Loading => {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, 12.0, Color32::from_rgb(26, 30, 44));
+                ui.painter().rect_stroke(
+                    rect,
+                    12.0,
+                    Stroke::new(1.0, Color32::from_rgb(48, 56, 82)),
+                );
+            }
             Thumbnail::Image(texture) => {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), Sense::hover());
                 ui.painter().rect_stroke(
@@ -1396,10 +1428,25 @@ impl LupaApp {
         }
     }
 
-    fn thumbnail_for_path(&mut self, ctx: &egui::Context, path: &str) -> &Thumbnail {
+    fn thumbnail_for_path(&mut self, _ctx: &egui::Context, path: &str) -> &Thumbnail {
         if !self.thumbnails.contains_key(path) {
-            let thumb = load_thumbnail(ctx, path, &self.root);
-            self.thumbnails.insert(path.to_string(), thumb);
+            let ext = extension_of(path);
+            if is_image_extension(&ext) {
+                self.thumbnails.insert(path.to_string(), Thumbnail::Loading);
+                let tx = self.tx.clone();
+                let root = self.root.clone();
+                let path_owned = path.to_string();
+                std::thread::spawn(move || {
+                    let result = load_thumbnail_data(&path_owned, &root);
+                    let _ = tx.send(UiEvent::ThumbnailLoaded {
+                        path: path_owned,
+                        result,
+                    });
+                });
+            } else {
+                self.thumbnails
+                    .insert(path.to_string(), make_badge_thumbnail(path));
+            }
         }
         self.thumbnails
             .get(path)
@@ -1595,7 +1642,7 @@ fn file_name_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn load_thumbnail(ctx: &egui::Context, path: &str, root: &str) -> Thumbnail {
+fn load_thumbnail_data(path: &str, root: &str) -> Result<LargePreviewData, String> {
     let p = Path::new(path);
     let ext = p
         .extension()
@@ -1603,47 +1650,45 @@ fn load_thumbnail(ctx: &egui::Context, path: &str, root: &str) -> Thumbnail {
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    if is_image_extension(&ext) {
-        if let Some(cache_file) = thumbnail_cache_file(root, p) {
-            if cache_file.exists() {
-                if let Ok(img) = image::open(&cache_file) {
-                    let rgba = img.to_rgba8();
-                    let size = [rgba.width() as usize, rgba.height() as usize];
-                    let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-                    let texture = ctx.load_texture(
-                        format!("thumb:{path}"),
-                        color_img,
-                        egui::TextureOptions::LINEAR,
-                    );
-                    return Thumbnail::Image(texture);
-                }
-            }
-
-            if let Ok(img) = image::open(p) {
-                let thumb = img.thumbnail(64, 64).to_rgba8();
-                let _ = save_thumb_to_cache(&thumb, &cache_file);
-                let size = [thumb.width() as usize, thumb.height() as usize];
-                let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
-                let texture = ctx.load_texture(
-                    format!("thumb:{path}"),
-                    color_img,
-                    egui::TextureOptions::LINEAR,
-                );
-                return Thumbnail::Image(texture);
-            }
-        } else if let Ok(img) = image::open(p) {
-            let thumb = img.thumbnail(64, 64).to_rgba8();
-            let size = [thumb.width() as usize, thumb.height() as usize];
-            let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
-            let texture = ctx.load_texture(
-                format!("thumb:{path}"),
-                color_img,
-                egui::TextureOptions::LINEAR,
-            );
-            return Thumbnail::Image(texture);
-        }
+    if !is_image_extension(&ext) {
+        return Ok(LargePreviewData { image: None });
     }
 
+    if let Some(cache_file) = thumbnail_cache_file(root, p) {
+        if cache_file.exists() {
+            if let Ok(img) = image::open(&cache_file) {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                return Ok(LargePreviewData {
+                    image: Some(color_img),
+                });
+            }
+        }
+
+        if let Ok(img) = image::open(p) {
+            let thumb = img.thumbnail(64, 64).to_rgba8();
+            let _ = save_thumb_to_cache(&thumb, &cache_file);
+            let size = [thumb.width() as usize, thumb.height() as usize];
+            let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
+            return Ok(LargePreviewData {
+                image: Some(color_img),
+            });
+        }
+    } else if let Ok(img) = image::open(p) {
+        let thumb = img.thumbnail(64, 64).to_rgba8();
+        let size = [thumb.width() as usize, thumb.height() as usize];
+        let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_raw());
+        return Ok(LargePreviewData {
+            image: Some(color_img),
+        });
+    }
+
+    Err(format!("thumbnail unavailable for {}", p.display()))
+}
+
+fn make_badge_thumbnail(path: &str) -> Thumbnail {
+    let ext = extension_of(path);
     let label = if ext.is_empty() {
         "FILE".to_string()
     } else {
