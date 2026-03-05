@@ -91,6 +91,36 @@ The `lupa-gui` app provides:
   - enlarged image preview when available
   - metadata + quick actions (`Open`, `Folder`)
 
+### Doc Chat modes
+
+Right panel `DOC CHAT` supports two modes:
+
+- `Extractive`: no model, answers from local snippets/metadata.
+- `Local AI`: uses local `llama-server` + GGUF model (offline).
+
+You can switch modes directly in the chat panel.
+
+## Local AI one-time setup (Windows)
+
+Install runtime + tiny model once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ai\setup-local-ai.ps1
+```
+
+This installs files in:
+
+- `%LOCALAPPDATA%\Lupa\runtime\llama-server.exe`
+- `%LOCALAPPDATA%\Lupa\models\qwen2.5-0.5b-instruct-q4_k_m.gguf`
+
+Then in GUI, open `DOC CHAT` and select `Local AI`.
+
+Optional: run server manually for debugging:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ai\run-local-ai-server.ps1
+```
+
 ## Configuration (optional `config.toml`)
 
 If present in the project root, it is loaded automatically.

@@ -22,6 +22,9 @@ pub struct LupaConfig {
 pub struct QaConfig {
     pub mode: QaMode,
     pub model_path: String,
+    pub endpoint: String,
+    pub llama_server_path: String,
+    pub auto_start_server: bool,
     pub max_tokens: usize,
     pub timeout_ms: u64,
 }
@@ -74,6 +77,9 @@ impl Default for QaConfig {
         Self {
             mode: QaMode::Extractive,
             model_path: String::new(),
+            endpoint: "http://127.0.0.1:8088".to_string(),
+            llama_server_path: "third_party/llama/llama-server.exe".to_string(),
+            auto_start_server: true,
             max_tokens: 256,
             timeout_ms: 8_000,
         }

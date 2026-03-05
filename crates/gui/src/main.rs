@@ -19,8 +19,8 @@ use eframe::egui::{
 };
 use lupa_core::{
     extractors::{extract_docx_text, extract_pdf_text},
-    BuildProgress, DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions,
-    SearchResult,
+    provider_from_config, BuildProgress, DoctorReport, IndexStats, LupaConfig, LupaEngine,
+    QaMode, QaRequest, SearchHit, SearchOptions, SearchResult,
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -203,6 +203,8 @@ struct LupaApp {
     doc_chat_path: Option<String>,
     doc_chat_input: String,
     doc_chat_messages: Vec<String>,
+    qa_mode: QaMode,
+    qa_busy: bool,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
@@ -272,6 +274,9 @@ enum UiEvent {
         request_id: u64,
         items: Vec<String>,
     },
+    QaDone {
+        result: Result<String, String>,
+    },
 }
 
 impl LupaApp {
@@ -315,6 +320,11 @@ impl LupaApp {
     }
 
     fn send_doc_chat_question(&mut self) {
+        if self.qa_busy {
+            self.doc_chat_messages
+                .push("Assistant: Working on your previous question...".to_string());
+            return;
+        }
         let question = self.doc_chat_input.trim().to_string();
         if question.is_empty() {
             return;
@@ -327,36 +337,29 @@ impl LupaApp {
                 .push("Assistant: No selected document.".to_string());
             return;
         };
+        self.qa_busy = true;
+        self.doc_chat_messages
+            .push("Assistant: Thinking...".to_string());
 
-        let hit_snippet = self.selected_hit().and_then(|h| h.snippet);
-        let cached_snippet = match self.snippet_cache.get(&path) {
-            Some(SnippetState::Ready(data)) => Some(data.snippet.clone()),
-            Some(SnippetState::Loading) => {
-                self.doc_chat_messages
-                    .push("Assistant: Loading document snippet, try again in a second."
-                        .to_string());
-                return;
-            }
-            Some(SnippetState::Error(err)) => {
-                self.doc_chat_messages
-                    .push(format!("Assistant: Snippet error: {err}"));
-                return;
-            }
-            Some(SnippetState::Unsupported) => None,
-            None => {
-                self.request_snippet(&path);
-                self.doc_chat_messages.push(
-                    "Assistant: Preparing snippet in background. Ask again in a moment."
-                        .to_string(),
-                );
-                return;
-            }
-        };
-
-        let snippet = hit_snippet.or(cached_snippet);
-        let meta = file_meta_labels(&path);
-        let answer = make_extract_answer(&question, &path, &meta, snippet.as_deref());
-        self.doc_chat_messages.push(format!("Assistant: {answer}"));
+        let mode = self.qa_mode;
+        let root = self.root.clone();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<String, String> {
+                let root_path = PathBuf::from(&root);
+                let mut cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
+                cfg.qa.mode = mode;
+                let provider = provider_from_config(root_path, cfg);
+                let answer = provider
+                    .answer(&QaRequest {
+                        document_path: path.clone(),
+                        question,
+                    })
+                    .map_err(|e| e.to_string())?;
+                Ok(answer.answer)
+            })();
+            let _ = tx.send(UiEvent::QaDone { result });
+        });
     }
 
     fn new() -> Self {
@@ -427,6 +430,8 @@ impl LupaApp {
             doc_chat_path: None,
             doc_chat_input: String::new(),
             doc_chat_messages: Vec::new(),
+            qa_mode: QaMode::Extractive,
+            qa_busy: false,
             tx,
             rx,
             last_state_snapshot: loaded_state,
@@ -940,6 +945,22 @@ impl LupaApp {
                     if request_id == self.suggest_request_id {
                         self.suggestions = items;
                         self.selected_suggestion = 0;
+                    }
+                }
+                UiEvent::QaDone { result } => {
+                    self.qa_busy = false;
+                    if self
+                        .doc_chat_messages
+                        .last()
+                        .is_some_and(|m| m == "Assistant: Thinking...")
+                    {
+                        self.doc_chat_messages.pop();
+                    }
+                    match result {
+                        Ok(answer) => self.doc_chat_messages.push(format!("Assistant: {answer}")),
+                        Err(err) => self
+                            .doc_chat_messages
+                            .push(format!("Assistant: {err}")),
                     }
                 }
             }
@@ -1704,6 +1725,11 @@ impl LupaApp {
                     .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
+                            let current_mode = if self.qa_mode == QaMode::LocalModel {
+                                "Local AI"
+                            } else {
+                                "Extractive"
+                            };
                             ui.label(
                                 RichText::new("DOC CHAT")
                                     .small()
@@ -1712,7 +1738,7 @@ impl LupaApp {
                             );
                             ui.separator();
                             ui.label(
-                                RichText::new("Local Extractive")
+                                RichText::new(current_mode)
                                     .small()
                                     .color(Color32::from_rgb(160, 169, 199)),
                             );
@@ -1726,6 +1752,37 @@ impl LupaApp {
                             });
                         });
                         ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            let ext_selected = self.qa_mode == QaMode::Extractive;
+                            let ai_selected = self.qa_mode == QaMode::LocalModel;
+                            if ui
+                                .add_sized(
+                                    [110.0, 24.0],
+                                    egui::Button::new("Extractive").fill(if ext_selected {
+                                        Color32::from_rgb(70, 76, 130)
+                                    } else {
+                                        Color32::from_rgb(34, 38, 56)
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                self.qa_mode = QaMode::Extractive;
+                            }
+                            if ui
+                                .add_sized(
+                                    [110.0, 24.0],
+                                    egui::Button::new("Local AI").fill(if ai_selected {
+                                        Color32::from_rgb(70, 76, 130)
+                                    } else {
+                                        Color32::from_rgb(34, 38, 56)
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                self.qa_mode = QaMode::LocalModel;
+                            }
+                        });
+                        ui.add_space(2.0);
                         ui.add(
                             egui::Label::new(
                                 RichText::new(title)
@@ -2581,90 +2638,6 @@ fn count_occurrences_case_insensitive(content: &str, query: &str) -> usize {
         }
     }
     count
-}
-
-fn make_extract_answer(
-    question: &str,
-    path: &str,
-    meta: &FileMetaLabels,
-    snippet: Option<&str>,
-) -> String {
-    let q = question.to_ascii_lowercase();
-    if q.contains("created")
-        || q.contains("creado")
-        || q.contains("fecha de creacion")
-        || q.contains("creation date")
-    {
-        return format!("Created: {} (source: {})", meta.created, file_name_from_path(path));
-    }
-    if q.contains("modified")
-        || q.contains("modificado")
-        || q.contains("ultima modificacion")
-        || q.contains("last modified")
-    {
-        return format!(
-            "Modified: {} (source: {})",
-            meta.modified,
-            file_name_from_path(path)
-        );
-    }
-    if q.contains("size") || q.contains("tamano") || q.contains("peso") {
-        return format!("Size: {} (source: {})", meta.size, file_name_from_path(path));
-    }
-
-    let Some(snippet) = snippet else {
-        return "I do not have extracted text yet for this file. Try again after snippet loads."
-            .to_string();
-    };
-    let clean = snippet.replace('\n', " ");
-    let sentences = split_sentences(&clean);
-    if sentences.is_empty() {
-        return "No textual content available to answer this question.".to_string();
-    }
-    let keywords = extract_keywords(question);
-    if keywords.is_empty() {
-        return format!(
-            "{} (source: {})",
-            sentences[0].trim(),
-            file_name_from_path(path)
-        );
-    }
-    let mut best = sentences[0].trim().to_string();
-    let mut best_score = 0usize;
-    for s in &sentences {
-        let lower = s.to_ascii_lowercase();
-        let score = keywords.iter().filter(|k| lower.contains(*k)).count();
-        if score > best_score {
-            best_score = score;
-            best = s.trim().to_string();
-        }
-    }
-    if best_score == 0 {
-        best = sentences[0].trim().to_string();
-    }
-    format!("{} (source: {})", best, file_name_from_path(path))
-}
-
-fn split_sentences(text: &str) -> Vec<String> {
-    text.split(['.', '!', '?', ';', '\n'])
-        .map(str::trim)
-        .filter(|s| s.len() >= 20)
-        .take(12)
-        .map(|s| s.to_string())
-        .collect()
-}
-
-fn extract_keywords(question: &str) -> Vec<String> {
-    let stop = [
-        "the", "and", "for", "with", "from", "that", "this", "what", "where", "when", "como",
-        "para", "con", "del", "las", "los", "que", "una", "uno", "sobre", "donde", "cual",
-    ];
-    question
-        .split(|c: char| !c.is_alphanumeric())
-        .map(|w| w.trim().to_ascii_lowercase())
-        .filter(|w| w.len() >= 3 && !stop.contains(&w.as_str()))
-        .take(10)
-        .collect()
 }
 
 fn render_highlighted_snippet(ui: &mut egui::Ui, snippet: &str, query: &str, wrap: bool) {

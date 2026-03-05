@@ -1,7 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 
 use crate::config::{LupaConfig, QaMode};
 use crate::extractors::{extract_docx_text, extract_pdf_text};
@@ -147,14 +152,14 @@ impl QaProvider for ExtractiveProvider {
 }
 
 pub struct LocalModelProvider {
-    _project_root: PathBuf,
+    project_root: PathBuf,
     config: LupaConfig,
 }
 
 impl LocalModelProvider {
     pub fn new(project_root: PathBuf, config: LupaConfig) -> Self {
         Self {
-            _project_root: project_root,
+            project_root,
             config,
         }
     }
@@ -165,16 +170,180 @@ impl QaProvider for LocalModelProvider {
         QaMode::LocalModel
     }
 
-    fn answer(&self, _request: &QaRequest) -> Result<QaAnswer> {
-        if self.config.qa.model_path.trim().is_empty() {
+    fn answer(&self, request: &QaRequest) -> Result<QaAnswer> {
+        let model_path = resolve_doc_path(&self.project_root, &expand_env_tokens(&self.config.qa.model_path));
+        if model_path.as_os_str().is_empty() || self.config.qa.model_path.trim().is_empty() {
             return Err(anyhow!(
                 "qa.mode=local_model but qa.model_path is empty. Configure it in config.toml."
             ));
         }
-        Err(anyhow!(
-            "Local model provider is a stub for now. Keep qa.mode=extractive until worker integration."
-        ))
+        if !model_path.exists() {
+            return Err(anyhow!(
+                "model file not found: {}",
+                model_path.display()
+            ));
+        }
+
+        let endpoint = self.config.qa.endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(anyhow!("qa.endpoint is empty"));
+        }
+
+        if !server_alive(endpoint) && self.config.qa.auto_start_server {
+            let server_path = resolve_doc_path(
+                &self.project_root,
+                &expand_env_tokens(&self.config.qa.llama_server_path),
+            );
+            start_server_once(
+                &server_path,
+                &model_path,
+                endpoint,
+                self.config.qa.timeout_ms,
+            )?;
+        }
+
+        wait_for_server(endpoint, self.config.qa.timeout_ms)?;
+        let prompt = build_doc_prompt(request);
+        let completion = request_completion(
+            endpoint,
+            &prompt,
+            self.config.qa.max_tokens,
+            self.config.qa.timeout_ms,
+        )?;
+
+        Ok(QaAnswer {
+            answer: completion.clone(),
+            citations: vec![QaCitation {
+                path: request.document_path.clone(),
+                excerpt: completion,
+            }],
+        })
     }
+}
+
+fn build_doc_prompt(request: &QaRequest) -> String {
+    format!(
+        "You are an offline document assistant. Answer briefly and cite only the provided path.\nDocument path: {}\nQuestion: {}\nAnswer:",
+        request.document_path, request.question
+    )
+}
+
+fn request_completion(endpoint: &str, prompt: &str, max_tokens: usize, timeout_ms: u64) -> Result<String> {
+    let url = format!("{}/completion", endpoint.trim_end_matches('/'));
+    let body = json!({
+        "prompt": prompt,
+        "n_predict": max_tokens as i64,
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "stop": ["\n\nUser:", "\n\nQuestion:"]
+    });
+    let value: Value = ureq::post(&url)
+        .timeout(Duration::from_millis(timeout_ms))
+        .set("Content-Type", "application/json")
+        .send_json(body)
+        .map_err(|e| anyhow!("llama-server request failed: {e}"))?
+        .into_json::<Value>()
+        .map_err(|e| anyhow!("invalid response json: {e}"))?;
+
+    let text = value
+        .get("content")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.get("completion").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return Err(anyhow!("empty response from local model"));
+    }
+    Ok(text)
+}
+
+fn server_alive(endpoint: &str) -> bool {
+    let health = format!("{}/health", endpoint.trim_end_matches('/'));
+    ureq::get(&health)
+        .timeout(Duration::from_millis(600))
+        .call()
+        .map(|r| r.status() == 200)
+        .unwrap_or(false)
+}
+
+fn wait_for_server(endpoint: &str, timeout_ms: u64) -> Result<()> {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_millis() < timeout_ms as u128 {
+        if server_alive(endpoint) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    Err(anyhow!(
+        "local model server did not become ready at {} within {}ms",
+        endpoint,
+        timeout_ms
+    ))
+}
+
+fn start_server_once(server_path: &Path, model_path: &Path, endpoint: &str, timeout_ms: u64) -> Result<()> {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(());
+    }
+
+    if !server_path.exists() {
+        STARTED.store(false, Ordering::SeqCst);
+        return Err(anyhow!(
+            "llama-server executable not found: {}",
+            server_path.display()
+        ));
+    }
+
+    let port = endpoint_port(endpoint).unwrap_or(8088).to_string();
+    let host = "127.0.0.1";
+    let mut cmd = Command::new(server_path);
+    cmd.arg("-m")
+        .arg(model_path)
+        .arg("-c")
+        .arg("2048")
+        .arg("--host")
+        .arg(host)
+        .arg("--port")
+        .arg(&port);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
+        .map_err(|e| anyhow!("failed to start llama-server: {e}"))?;
+
+    wait_for_server(endpoint, timeout_ms)?;
+    Ok(())
+}
+
+fn endpoint_port(endpoint: &str) -> Option<u16> {
+    let e = endpoint.trim_end_matches('/');
+    let pos = e.rfind(':')?;
+    e[pos + 1..].parse::<u16>().ok()
+}
+
+fn expand_env_tokens(input: &str) -> String {
+    let mut out = input.to_string();
+    if out.contains("%LOCALAPPDATA%") {
+        if let Ok(v) = std::env::var("LOCALAPPDATA") {
+            out = out.replace("%LOCALAPPDATA%", &v);
+        }
+    }
+    if out.starts_with("~/") {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            out = out.replacen("~", &home, 1);
+        }
+    }
+    out
 }
 
 fn resolve_doc_path(project_root: &Path, raw: &str) -> PathBuf {
