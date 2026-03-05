@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -1156,19 +1157,53 @@ impl LupaApp {
                         }
 
                         ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("\u{1F680} Open").clicked() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                            let active_query = self
+                                .last_search
+                                .as_ref()
+                                .map(|s| s.query.clone())
+                                .unwrap_or_else(|| self.query.clone());
+                            if ui
+                                .add_sized([84.0, 28.0], egui::Button::new("\u{1F680} Open"))
+                                .clicked()
+                            {
                                 let _ = open_file_path(Path::new(&preview_path));
                             }
-                            if ui.button("\u{1F4CE} Open with...").clicked() {
+                            if ui
+                                .add_sized(
+                                    [132.0, 28.0],
+                                    egui::Button::new("\u{1F50E} Open at match"),
+                                )
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(active_query.clone());
+                                match open_at_match(Path::new(&preview_path), &active_query) {
+                                    Ok(msg) => self.status = msg,
+                                    Err(err) => self.status = err,
+                                }
+                            }
+                            if ui
+                                .add_sized(
+                                    [108.0, 28.0],
+                                    egui::Button::new("\u{1F4CE} Open with..."),
+                                )
+                                .clicked()
+                            {
                                 let _ = open_with_dialog(Path::new(&preview_path));
                             }
-                            if ui.button("\u{1F4C1} Folder").clicked() {
+                            if ui
+                                .add_sized([92.0, 28.0], egui::Button::new("\u{1F4C1} Folder"))
+                                .clicked()
+                            {
                                 if let Some(parent) = Path::new(&preview_path).parent() {
                                     let _ = open_folder_path(parent);
                                 }
                             }
-                            if ui.button("\u{1F4CB} Copy").clicked() {
+                            if ui
+                                .add_sized([84.0, 28.0], egui::Button::new("\u{1F4CB} Copy"))
+                                .clicked()
+                            {
                                 ui.ctx().copy_text(preview_path.clone());
                             }
                         });
@@ -1420,8 +1455,21 @@ impl LupaApp {
         );
 
         response.context_menu(|ui| {
+            let active_query = self
+                .last_search
+                .as_ref()
+                .map(|s| s.query.clone())
+                .unwrap_or_else(|| self.query.clone());
             if ui.button("Open").clicked() {
                 let _ = open_file_path(Path::new(&hit.path));
+                ui.close_menu();
+            }
+            if ui.button("Open at match").clicked() {
+                ui.ctx().copy_text(active_query.clone());
+                match open_at_match(Path::new(&hit.path), &active_query) {
+                    Ok(msg) => self.status = msg,
+                    Err(err) => self.status = err,
+                }
                 ui.close_menu();
             }
             if ui.button("Open with...").clicked() {
@@ -2180,6 +2228,127 @@ fn matches_filter(path: &str, filter: FileFilter) -> bool {
             "mp3" | "wav" | "flac" | "aac" | "ogg" | "mp4" | "mkv" | "mov" | "avi" | "webm"
         ),
     }
+}
+
+fn open_at_match(path: &Path, query: &str) -> Result<String, String> {
+    let query_trimmed = query.trim();
+    if query_trimmed.is_empty() {
+        open_file_path(path)?;
+        return Ok("Opened file (empty query)".to_string());
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    {
+        let win_path = windows_path(path);
+
+        if ext == "pdf" {
+            let sumatra = Command::new("SumatraPDF.exe")
+                .args(["-reuse-instance", "-search", query_trimmed, &win_path])
+                .spawn();
+            if sumatra.is_ok() {
+                return Ok("Opened PDF at match (SumatraPDF search)".to_string());
+            }
+            open_file_path(path)?;
+            return Ok(
+                "Opened PDF in default viewer. Direct page jump is not supported there; query copied (Ctrl+F)."
+                    .to_string(),
+            );
+        }
+
+        if matches!(ext.as_str(), "doc" | "docx" | "odt" | "rtf") {
+            open_file_path(path)?;
+            return Ok("Opened document. Query copied; use Ctrl+F.".to_string());
+        }
+
+        if is_text_navigation_ext(&ext) {
+            if let Some(line) = find_first_match_line(path, query_trimmed) {
+                if has_vscode_cli() {
+                    let goto = format!("{win_path}:{line}:1");
+                    let _ = Command::new("code").args(["--goto", &goto]).spawn();
+                    return Ok(format!("Opened at first match (line {line}) in VS Code."));
+                }
+            }
+            open_file_path(path)?;
+            return Ok("Opened text file. Query copied; use Ctrl+F.".to_string());
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = ext;
+        open_file_path(path)?;
+        return Ok("Opened file. Query copied; use find in your viewer/editor.".to_string());
+    }
+
+    #[allow(unreachable_code)]
+    {
+        open_file_path(path)?;
+        Ok("Opened file".to_string())
+    }
+}
+
+fn is_text_navigation_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "txt"
+            | "md"
+            | "log"
+            | "rs"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "py"
+            | "java"
+            | "go"
+            | "cs"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "html"
+            | "css"
+            | "json"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "xml"
+            | "sql"
+            | "sh"
+            | "ps1"
+            | "csv"
+            | "ini"
+    )
+}
+
+fn find_first_match_line(path: &Path, query: &str) -> Option<usize> {
+    let content = read_text_limited(path, 2 * 1024 * 1024).ok()?;
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    for (i, line) in content.lines().enumerate() {
+        if line.to_ascii_lowercase().contains(&q) {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
+fn has_vscode_cli() -> bool {
+    static HAS_CODE: OnceLock<bool> = OnceLock::new();
+    *HAS_CODE.get_or_init(|| {
+        Command::new("cmd")
+            .args(["/C", "where", "code"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
 }
 
 fn open_file_path(path: &Path) -> Result<(), String> {
