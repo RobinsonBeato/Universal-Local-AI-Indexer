@@ -1726,10 +1726,13 @@ impl LupaApp {
                             });
                         });
                         ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(title)
-                                .strong()
-                                .color(Color32::from_rgb(235, 239, 255)),
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(title)
+                                    .strong()
+                                    .color(Color32::from_rgb(235, 239, 255)),
+                            )
+                            .truncate(),
                         );
                         ui.add(
                             egui::Label::new(
@@ -1742,21 +1745,22 @@ impl LupaApp {
                     });
 
                 ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
+                let quick_w = ((ui.available_width() - 16.0) / 3.0).max(92.0);
+                ui.horizontal(|ui| {
                     if ui
-                        .add_sized([108.0, 24.0], egui::Button::new("Summary"))
+                        .add_sized([quick_w, 26.0], egui::Button::new("Summary"))
                         .clicked()
                     {
                         self.doc_chat_input = "Summarize this document".to_string();
                     }
                     if ui
-                        .add_sized([102.0, 24.0], egui::Button::new("Key dates"))
+                        .add_sized([quick_w, 26.0], egui::Button::new("Key dates"))
                         .clicked()
                     {
                         self.doc_chat_input = "When was it created and modified?".to_string();
                     }
                     if ui
-                        .add_sized([114.0, 24.0], egui::Button::new("Main topic"))
+                        .add_sized([quick_w, 26.0], egui::Button::new("Main topic"))
                         .clicked()
                     {
                         self.doc_chat_input = "What is the main topic?".to_string();
@@ -1801,17 +1805,25 @@ impl LupaApp {
                                             egui::Layout::left_to_right(Align::TOP)
                                         },
                                         |ui| {
+                                            let max_bubble_w =
+                                                (ui.available_width() * 0.88).clamp(180.0, 520.0);
                                             egui::Frame::none()
                                                 .fill(bubble_fill)
                                                 .stroke(Stroke::new(1.0, bubble_stroke))
                                                 .rounding(egui::Rounding::same(12.0))
                                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                                 .show(ui, |ui| {
-                                                    ui.set_max_width((ui.available_width() * 0.9).max(160.0));
-                                                    ui.label(
-                                                        RichText::new(body)
-                                                            .small()
-                                                            .color(Color32::from_rgb(228, 234, 255)),
+                                                    ui.set_max_width(max_bubble_w);
+                                                    ui.add_sized(
+                                                        [max_bubble_w - 20.0, 0.0],
+                                                        egui::Label::new(
+                                                            RichText::new(body)
+                                                                .small()
+                                                                .color(Color32::from_rgb(
+                                                                    228, 234, 255,
+                                                                )),
+                                                        )
+                                                        .wrap(),
                                                     );
                                                 });
                                         },
@@ -1836,15 +1848,16 @@ impl LupaApp {
                             input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
+                            let btn_w = ((ui.available_width() - 8.0) / 2.0).max(72.0);
                             if ui
-                                .add_sized([76.0, 28.0], egui::Button::new("Send"))
+                                .add_sized([btn_w, 28.0], egui::Button::new("Send"))
                                 .clicked()
                                 || enter_pressed
                             {
                                 self.send_doc_chat_question();
                             }
                             if ui
-                                .add_sized([88.0, 28.0], egui::Button::new("Clear"))
+                                .add_sized([btn_w, 28.0], egui::Button::new("Clear"))
                                 .clicked()
                             {
                                 self.doc_chat_messages.clear();
