@@ -200,6 +200,9 @@ struct LupaApp {
     preview_cache: HashMap<String, PreviewData>,
     large_previews: HashMap<String, LargePreviewState>,
     snippet_cache: HashMap<String, SnippetState>,
+    doc_chat_path: Option<String>,
+    doc_chat_input: String,
+    doc_chat_messages: Vec<String>,
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
@@ -272,6 +275,41 @@ enum UiEvent {
 }
 
 impl LupaApp {
+    fn set_selected_path(&mut self, path: Option<String>) {
+        if self.selected_path == path {
+            return;
+        }
+        self.selected_path = path;
+        self.sync_doc_chat_with_selection();
+    }
+
+    fn open_doc_chat_panel(&mut self) {
+        let Some(path) = self.selected_path.clone() else {
+            return;
+        };
+        self.doc_chat_path = Some(path.clone());
+        self.doc_chat_input.clear();
+        self.doc_chat_messages.clear();
+        self.doc_chat_messages.push(format!(
+            "Assistant (demo): Ask about '{}'.",
+            file_name_from_path(&path)
+        ));
+    }
+
+    fn close_doc_chat_panel(&mut self) {
+        self.doc_chat_path = None;
+        self.doc_chat_input.clear();
+        self.doc_chat_messages.clear();
+    }
+
+    fn sync_doc_chat_with_selection(&mut self) {
+        if let Some(active_path) = self.doc_chat_path.as_deref() {
+            if self.selected_path.as_deref() != Some(active_path) {
+                self.close_doc_chat_panel();
+            }
+        }
+    }
+
     fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let root = std::env::current_dir()
@@ -337,6 +375,9 @@ impl LupaApp {
             preview_cache: HashMap::new(),
             large_previews: HashMap::new(),
             snippet_cache: HashMap::new(),
+            doc_chat_path: None,
+            doc_chat_input: String::new(),
+            doc_chat_messages: Vec::new(),
             tx,
             rx,
             last_state_snapshot: loaded_state,
@@ -745,7 +786,7 @@ impl LupaApp {
                             self.large_previews.clear();
                             self.snippet_cache.clear();
                             self.selected_filter = FileFilter::All;
-                            self.selected_path = result.hits.first().map(|h| h.path.clone());
+                            self.set_selected_path(result.hits.first().map(|h| h.path.clone()));
                             let normalized = result.query.trim().to_string();
                             if !normalized.is_empty() {
                                 self.recent_queries
@@ -1271,7 +1312,7 @@ impl LupaApp {
                 None => true,
             };
             if selected_missing {
-                self.selected_path = hits.first().map(|h| h.path.clone());
+                self.set_selected_path(hits.first().map(|h| h.path.clone()));
             }
 
             // Warm up only a few top snippets to avoid scroll jank on heavy formats.
@@ -1290,7 +1331,7 @@ impl LupaApp {
                         let hit = &hits[row];
                         let is_selected = self.selected_path.as_deref() == Some(hit.path.as_str());
                         if self.result_row(ui, ctx, row + 1, hit, is_selected) {
-                            self.selected_path = Some(hit.path.clone());
+                            self.set_selected_path(Some(hit.path.clone()));
                         }
                         ui.add_space(10.0);
                     }
@@ -1321,6 +1362,16 @@ impl LupaApp {
     }
 
     fn right_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.sync_doc_chat_with_selection();
+        if self
+            .doc_chat_path
+            .as_deref()
+            .is_some_and(|p| self.selected_path.as_deref() == Some(p))
+        {
+            self.doc_chat_panel(ui);
+            return;
+        }
+
         ui.spacing_mut().item_spacing.y = 12.0;
         egui::Frame::none()
             .fill(Color32::from_rgb(20, 20, 30))
@@ -1460,6 +1511,12 @@ impl LupaApp {
                             {
                                 ui.ctx().copy_text(preview_path.clone());
                             }
+                            if ui
+                                .add_sized([124.0, 28.0], egui::Button::new("Ask this doc"))
+                                .clicked()
+                            {
+                                self.open_doc_chat_panel();
+                            }
                         });
 
                         ui.add_space(10.0);
@@ -1573,6 +1630,72 @@ impl LupaApp {
                     ui.label("Indexados: -");
                     ui.label("Tiempo indexacion: -");
                 }
+            });
+    }
+
+    fn doc_chat_panel(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = 10.0;
+        egui::Frame::none()
+            .fill(Color32::from_rgb(20, 20, 30))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .show(ui, |ui| {
+                let title = self
+                    .doc_chat_path
+                    .as_ref()
+                    .map(|p| file_name_from_path(p))
+                    .unwrap_or_else(|| "Document".to_string());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("DOC CHAT (Demo)")
+                            .small()
+                            .strong()
+                            .color(Color32::from_rgb(99, 102, 241)),
+                    );
+                    ui.separator();
+                    ui.label(
+                        RichText::new(title)
+                            .small()
+                            .color(Color32::from_rgb(195, 202, 230)),
+                    );
+                });
+
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .max_height(380.0)
+                    .show(ui, |ui| {
+                        for msg in &self.doc_chat_messages {
+                            ui.label(
+                                RichText::new(msg)
+                                    .small()
+                                    .color(Color32::from_rgb(214, 220, 243)),
+                            );
+                            ui.add_space(4.0);
+                        }
+                    });
+
+                ui.add_space(8.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.doc_chat_input)
+                        .hint_text("Ask about this document (demo mode)..."),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Send").clicked() {
+                        let q = self.doc_chat_input.trim().to_string();
+                        if !q.is_empty() {
+                            self.doc_chat_messages.push(format!("You: {q}"));
+                            self.doc_chat_messages.push(
+                                "Assistant (demo): AI is not enabled yet. This panel is ready for local document Q&A integration."
+                                    .to_string(),
+                            );
+                            self.doc_chat_input.clear();
+                        }
+                    }
+                    if ui.button("Back to preview").clicked() {
+                        self.close_doc_chat_panel();
+                    }
+                });
             });
     }
 
@@ -1891,7 +2014,7 @@ impl eframe::App for LupaApp {
                         } else {
                             current_idx.saturating_sub(1)
                         };
-                        self.selected_path = Some(filtered_paths[next_idx].to_string());
+                        self.set_selected_path(Some(filtered_paths[next_idx].to_string()));
                     }
                 }
             }
