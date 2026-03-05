@@ -25,7 +25,9 @@ use lupa_core::{
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 
 mod query_intent;
+mod suggest;
 use query_intent::parse_natural_query;
+use suggest::build_suggestions;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -163,6 +165,10 @@ struct LupaApp {
     path_prefix: String,
     regex: String,
     highlight: bool,
+    recent_queries: Vec<String>,
+    suggestions: Vec<String>,
+    suggest_request_id: u64,
+    selected_suggestion: usize,
 
     busy: bool,
     backfill_running: bool,
@@ -244,6 +250,10 @@ enum UiEvent {
         path: String,
         result: Result<LargePreviewData, String>,
     },
+    SuggestionsReady {
+        request_id: u64,
+        items: Vec<String>,
+    },
 }
 
 impl LupaApp {
@@ -263,6 +273,10 @@ impl LupaApp {
             path_prefix: String::new(),
             regex: String::new(),
             highlight: false,
+            recent_queries: Vec::new(),
+            suggestions: Vec::new(),
+            suggest_request_id: 0,
+            selected_suggestion: 0,
             busy: false,
             backfill_running: false,
             watch: WatchState::default(),
@@ -360,6 +374,60 @@ impl LupaApp {
             );
             let _ = tx.send(UiEvent::SearchDone(res));
         });
+    }
+
+    fn request_suggestions(&mut self, text: String) {
+        if text.trim().is_empty() {
+            self.suggestions.clear();
+            self.selected_suggestion = 0;
+            return;
+        }
+
+        self.suggest_request_id = self.suggest_request_id.saturating_add(1);
+        let request_id = self.suggest_request_id;
+        let tx = self.tx.clone();
+        let recent = self.recent_queries.clone();
+        let context_terms = self
+            .last_search
+            .as_ref()
+            .map(|s| {
+                s.hits
+                    .iter()
+                    .take(48)
+                    .filter_map(|h| {
+                        Path::new(&h.path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        std::thread::spawn(move || {
+            let items = build_suggestions(&text, &recent, &context_terms);
+            let _ = tx.send(UiEvent::SuggestionsReady { request_id, items });
+        });
+    }
+
+    fn apply_suggestion(&mut self, suggestion: String, run_search: bool) {
+        // Invalidate in-flight suggestion responses based on older query text.
+        self.suggest_request_id = self.suggest_request_id.saturating_add(1);
+        self.query = suggestion.clone();
+        self.suggestions.retain(|item| item != &suggestion);
+        self.suggestions.insert(0, suggestion.clone());
+        self.selected_suggestion = 0;
+
+        self.recent_queries
+            .retain(|q| !q.eq_ignore_ascii_case(&suggestion));
+        self.recent_queries.insert(0, suggestion);
+        if self.recent_queries.len() > 30 {
+            self.recent_queries.truncate(30);
+        }
+
+        if run_search {
+            self.spawn_search();
+            self.suggestions.clear();
+        }
     }
 
     fn spawn_doctor(&mut self) {
@@ -603,6 +671,15 @@ impl LupaApp {
                             self.snippet_cache.clear();
                             self.selected_filter = FileFilter::All;
                             self.selected_path = result.hits.first().map(|h| h.path.clone());
+                            let normalized = result.query.trim().to_string();
+                            if !normalized.is_empty() {
+                                self.recent_queries
+                                    .retain(|q| !q.eq_ignore_ascii_case(&normalized));
+                                self.recent_queries.insert(0, normalized);
+                                if self.recent_queries.len() > 30 {
+                                    self.recent_queries.truncate(30);
+                                }
+                            }
                             self.last_search = Some(result);
                         }
                         Err(err) => {
@@ -694,6 +771,12 @@ impl LupaApp {
                             .insert(path.clone(), make_badge_thumbnail(&path));
                     }
                 },
+                UiEvent::SuggestionsReady { request_id, items } => {
+                    if request_id == self.suggest_request_id {
+                        self.suggestions = items;
+                        self.selected_suggestion = 0;
+                    }
+                }
             }
 
             if self.logs.len() > 220 {
@@ -704,6 +787,11 @@ impl LupaApp {
     }
     fn top_search_bar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
+        let mut input_has_focus = false;
+        let mut enter_on_input = false;
+        let mut arrow_down = false;
+        let mut arrow_up = false;
+        let mut should_search = false;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             ui.label(RichText::new("LUPA").strong().size(34.0));
@@ -715,7 +803,19 @@ impl LupaApp {
                     .hint_text("Search documents, code, or images...")
                     .margin(egui::vec2(12.0, 9.0)),
             );
-            let pressed_enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            input_has_focus = response.has_focus();
+            let enter_pressed = ui.input(|i| i.key_pressed(Key::Enter));
+            if input_has_focus {
+                enter_on_input = enter_pressed;
+                arrow_down = ui.input(|i| i.key_pressed(Key::ArrowDown));
+                arrow_up = ui.input(|i| i.key_pressed(Key::ArrowUp));
+            }
+            if response.lost_focus() && enter_pressed {
+                enter_on_input = true;
+            }
+            if response.changed() {
+                self.request_suggestions(self.query.clone());
+            }
 
             if ui
                 .add_sized(
@@ -724,9 +824,8 @@ impl LupaApp {
                 )
                 .on_hover_cursor(CursorIcon::PointingHand)
                 .clicked()
-                || pressed_enter
             {
-                self.spawn_search();
+                should_search = true;
             }
 
             let status_text = if self.busy || self.backfill_running {
@@ -768,6 +867,77 @@ impl LupaApp {
                     .color(Color32::from_rgb(160, 170, 185)),
             );
         });
+
+        if input_has_focus {
+            if !self.suggestions.is_empty() {
+                if arrow_down {
+                    self.selected_suggestion =
+                        (self.selected_suggestion + 1).min(self.suggestions.len() - 1);
+                }
+                if arrow_up {
+                    self.selected_suggestion = self.selected_suggestion.saturating_sub(1);
+                }
+                if enter_on_input {
+                    if let Some(s) = self.suggestions.get(self.selected_suggestion).cloned() {
+                        self.apply_suggestion(s, false);
+                    }
+                    should_search = true;
+                }
+            } else if enter_on_input {
+                should_search = true;
+            }
+        } else if enter_on_input {
+            // If Enter is pressed after input loses focus in the same frame,
+            // still apply selected suggestion (if any) before searching.
+            if !self.suggestions.is_empty() {
+                if let Some(s) = self.suggestions.get(self.selected_suggestion).cloned() {
+                    self.apply_suggestion(s, false);
+                }
+            }
+            should_search = true;
+        }
+
+        if should_search {
+            self.spawn_search();
+            self.suggestions.clear();
+        }
+
+        if !self.suggestions.is_empty() {
+            let mut clicked_suggestion: Option<String> = None;
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 18, 28))
+                .rounding(egui::Rounding::same(10.0))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(42, 45, 68)))
+                .inner_margin(egui::Margin::same(8.0))
+                .show(ui, |ui| {
+                    ui.set_max_width((ui.available_width() - 8.0).max(260.0));
+                    for (idx, s) in self.suggestions.clone().into_iter().take(8).enumerate() {
+                        let selected = idx == self.selected_suggestion;
+                        let text = if selected {
+                            RichText::new(s.clone())
+                                .small()
+                                .color(Color32::from_rgb(235, 240, 255))
+                        } else {
+                            RichText::new(s.clone())
+                                .small()
+                                .color(Color32::from_rgb(170, 180, 205))
+                        };
+                        let button = egui::Button::new(text)
+                            .fill(if selected {
+                                Color32::from_rgb(66, 74, 118)
+                            } else {
+                                Color32::from_rgb(24, 28, 44)
+                            })
+                            .min_size(egui::vec2(ui.available_width(), 26.0));
+                        if ui.add(button).clicked() {
+                            clicked_suggestion = Some(s);
+                        }
+                    }
+                });
+            if let Some(s) = clicked_suggestion {
+                self.apply_suggestion(s, true);
+            }
+        }
         ui.add_space(6.0);
     }
 
