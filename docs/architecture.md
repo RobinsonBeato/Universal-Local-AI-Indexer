@@ -1,52 +1,52 @@
-﻿# Architecture
+# Architecture
 
 ## Overview
 
-`lupa` usa una arquitectura de dos capas:
+`lupa` uses a three-layer architecture:
 
-1. `crates/core` (`lupa-core`): indexación, storage y query.
-2. `crates/cli` (`lupa`): interfaz de línea de comandos.
-3. `crates/gui` (`lupa-gui`): interfaz desktop sobre el mismo core.
+1. `crates/core` (`lupa-core`): indexing, storage, and query.
+2. `crates/cli` (`lupa`): command-line interface.
+3. `crates/gui` (`lupa-gui`): desktop interface on top of the same core.
 
 ## Storage model
 
 ### Tantivy index (disk)
 
-- Ubicación: `.lupa/index/`
-- Campos:
+- Location: `.lupa/index/`
+- Fields:
   - `path` (`STRING | STORED`)
   - `name` (`TEXT | STORED`)
   - `content` (`TEXT | STORED`)
 
 ### SQLite metadata
 
-- Ubicación: `.lupa/metadata.db`
-- Tabla `files`:
+- Location: `.lupa/metadata.db`
+- `files` table:
   - `path` (PK)
   - `mtime`
   - `size`
-  - `hash` (opcional)
+  - `hash` (optional)
   - `indexed_at`
 
 ## Incremental strategy
 
-1. Se recorre el filesystem con `walkdir` aplicando excludes (sin limitar tipos de archivo).
-2. Se compara contra metadata previa (`mtime + size`).
-3. Si el archivo es chico, se calcula `xxhash` para evitar reindexar cambios espurios.
-4. Sólo archivos nuevos/cambiados se vuelven a indexar.
-5. Paths eliminados se borran de Tantivy y SQLite.
+1. Traverse the filesystem with `walkdir` applying excludes (without restricting file types).
+2. Compare against previous metadata (`mtime + size`).
+3. If a file is small, compute `xxhash` to avoid reindexing from noisy timestamp changes.
+4. Reindex only new/changed files.
+5. Remove deleted paths from Tantivy and SQLite.
 
-Nota: se indexan todos los archivos por nombre/ruta. El full-text de contenido se aplica sólo a extensiones de texto configuradas.
-Además se extrae texto real de `docx` y `pdf` por defecto.
+Note: all files are indexed by name/path. Content full-text is applied only to configured text extensions.
+Additionally, real text extraction from `docx` and `pdf` is enabled by default.
 
 ## Concurrency
 
-- Preprocesado de documentos (lectura + hash) paralelo con `rayon`.
-- Escritura de índice en un único writer de Tantivy (consistente por commit).
+- Parallel document preprocessing (read + hash) with `rayon`.
+- Single Tantivy writer for index writes (consistent commit model).
 
 ## Privacy defaults
 
-Excludes por defecto:
+Default excludes:
 
 - `node_modules`
 - `.git`
@@ -59,16 +59,16 @@ Excludes por defecto:
 
 ## CLI commands
 
-- `lupa index build`: indexación incremental manual.
-- `lupa index watch`: loop incremental periódico.
-- `lupa search "<query>"`: búsqueda full-text y salida JSON opcional.
-- `lupa doctor`: health checks de paths/permisos/index/db.
+- `lupa index build`: manual incremental indexing.
+- `lupa index watch`: periodic incremental loop.
+- `lupa search "<query>"`: full-text search with optional JSON output.
+- `lupa doctor`: health checks for paths/permissions/index/db.
 
 ## JSON output stability
 
-`search --json` devuelve estructura estable:
+`search --json` returns a stable structure:
 
 - `query`
 - `total_hits`
 - `took_ms`
-- `hits[]` con `path`, `score`, `snippet`
+- `hits[]` with `path`, `score`, `snippet`

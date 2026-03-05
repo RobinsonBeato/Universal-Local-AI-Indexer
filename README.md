@@ -1,21 +1,21 @@
-﻿# Universal Local AI Indexer (`lupa`)
+# Universal Local AI Indexer (`lupa`)
 
-Indexador y buscador local de archivos para Windows (también portable a Linux/macOS), offline-first, sin IA y sin servicios externos.
+Local file indexer and search engine for Windows (also portable to Linux/macOS), offline-first, with no AI and no external services.
 
-## Objetivos
+## Goals
 
-- Offline-first: sin APIs externas, sin subida de archivos, sin telemetría por defecto.
-- Costo $0: sin modelos, embeddings, vector DB ni cloud.
-- Ultrarrápido: Tantivy full-text + SQLite metadata + indexación incremental.
-- Privacidad por defecto: excludes sensibles preconfigurados.
+- Offline-first: no external APIs, no file uploads, no telemetry by default.
+- $0 cost: no models, embeddings, vector DB, or cloud.
+- Ultra-fast: Tantivy full-text + SQLite metadata + incremental indexing.
+- Privacy by default: sensitive excludes are preconfigured.
 
-## Qué indexa
+## What it indexes
 
-- Todos los tipos de archivo por `nombre` y `ruta` (incluye Word, imágenes, binarios, etc.).
-- Contenido full-text para:
-  - extensiones de texto configuradas (`txt`, `md`, `log`, código, etc.)
-  - `docx` (texto interno real)
-  - `pdf` (texto interno real)
+- All file types by `name` and `path` (includes Word files, images, binaries, etc.).
+- Full-text content for:
+  - configured text extensions (`txt`, `md`, `log`, source code, etc.)
+  - `docx` (real internal text)
+  - `pdf` (real internal text)
 
 ## Quickstart
 
@@ -31,69 +31,69 @@ GUI (desktop):
 cargo run -p lupa-gui
 ```
 
-### 2) Indexar por primera vez
+### 2) First-time indexing
 
 ```bash
 cargo run -p lupa -- index build
 ```
 
-Salida JSON:
+JSON output:
 
 ```bash
 cargo run -p lupa -- index build --json
 ```
 
-### 3) Buscar
+### 3) Search
 
 ```bash
-cargo run -p lupa -- search "error de conexión" --limit 20 --highlight --stats
+cargo run -p lupa -- search "connection error" --limit 20 --highlight --stats
 ```
 
-Salida JSON para scripts:
+JSON output for scripts:
 
 ```bash
 cargo run -p lupa -- search "query" --json
 ```
 
-### 4) Modo watch (incremental)
+### 4) Watch mode (incremental)
 
 ```bash
 cargo run -p lupa -- index watch --interval-secs 2
 ```
 
-`index watch` usa eventos del filesystem + cola de `dirty paths` para reindexar sólo cambios.
+`index watch` uses filesystem events + a `dirty paths` queue to reindex only changed files.
 
-### 5) Diagnóstico local
+### 5) Local diagnostics
 
 ```bash
 cargo run -p lupa -- doctor
 ```
 
-## Comandos CLI
+## CLI commands
 
 - `lupa index build`
 - `lupa index watch`
 - `lupa search "<query>" [--json] [--limit N] [--path-prefix ...] [--regex ...] [--highlight] [--stats]`
 - `lupa doctor`
 
-## Interfaz gráfica
+## Graphical Interface
 
-La app `lupa-gui` ofrece:
+The `lupa-gui` app provides:
 
 - root selector
 - `Index Build`
 - `Watch Start/Stop`
 - `Doctor`
-- búsqueda con `limit`, `path_prefix`, `regex`, `highlight`
-- panel de resultados + panel de actividad
-- vista previa lateral del resultado seleccionado:
-  - fragmento contextual alrededor de la búsqueda (texto/docx/pdf)
-  - preview de imagen ampliado cuando aplica
-  - metadata + acciones rápidas (`Abrir`, `Carpeta`)
+- search with `limit`, `path_prefix`, `regex`, `highlight`
+- results panel + activity panel
+- side preview for the selected result:
+  - contextual snippet around the query (text/docx/pdf)
+  - enlarged image preview when available
+  - metadata + quick actions (`Open`, `Folder`)
 
-## Configuración (`config.toml` opcional)
+## Configuration (optional `config.toml`)
 
-Si existe en la raíz del proyecto, se carga automáticamente.
+If present in the project root, it is loaded automatically.
 
 ```toml
 excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
@@ -104,11 +104,11 @@ hash_small_file_threshold = 65536
 threads = 0
 ```
 
-- `threads = 0`: usa los núcleos disponibles.
-- `hash_small_file_threshold`: para archivos chicos calcula `xxhash` y evita reindexar si el contenido no cambió.
-- `max_structured_file_size_bytes`: límite para extraer texto de `pdf/docx` (subilo si faltan fragmentos en archivos grandes).
+- `threads = 0`: uses available CPU cores.
+- `hash_small_file_threshold`: for small files, computes `xxhash` to avoid reindexing when content did not change.
+- `max_structured_file_size_bytes`: limit for `pdf/docx` text extraction (increase it if snippets are missing in large files).
 
-## Excludes por defecto (privacidad)
+## Default excludes (privacy)
 
 - `node_modules`
 - `.git`
@@ -119,15 +119,15 @@ threads = 0
 - `Windows`
 - `System32`
 
-## Arquitectura
+## Architecture
 
-Resumen: [docs/architecture.md](docs/architecture.md)
+Summary: [docs/architecture.md](docs/architecture.md)
 
-## Benchmarks básicos
+## Basic benchmarks
 
-Guía y script: [docs/benchmarks.md](docs/benchmarks.md)
+Guide and script: [docs/benchmarks.md](docs/benchmarks.md)
 
-## Verificación DoD
+## DoD verification
 
 ```bash
 cargo fmt --all --check

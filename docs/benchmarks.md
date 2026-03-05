@@ -1,11 +1,11 @@
-﻿# Benchmarks básicos
+# Basic benchmarks
 
-Este proyecto prioriza dos métricas:
+This project prioritizes two metrics:
 
-1. Indexar `N` archivos sin fallar.
-2. Ejecutar 10 queries y reportar `p95`.
+1. Index `N` files without failures.
+2. Run 10 queries and report `p95`.
 
-## Script sugerido (PowerShell)
+## Suggested script (PowerShell)
 
 ```powershell
 ./scripts/bench.ps1 -Root . -Queries @(
@@ -13,21 +13,32 @@ Este proyecto prioriza dos métricas:
 )
 ```
 
-## Qué mide
+## What it measures
 
-- Tiempo total de `index build`.
-- Latencia por query de `search --json`.
-- `p95` de las 10 búsquedas.
+- Total `index build` time.
+- Per-query latency for `search --json`.
+- `p95` over the 10 searches.
 
-## Notas
+## Notes
 
-- Ejecutar benchmark con índice caliente (segunda corrida) para aproximar objetivo `< 50ms` típico.
-- En repos grandes (100k archivos), ajustar `include_extensions` y `max_file_size_bytes` para consistencia.
+- Run benchmarks with a warm index (second run) to approximate the typical `< 50ms` target.
+- On large repositories (100k files), tune `include_extensions` and `max_file_size_bytes` for consistency.
 
-## Corrida local de referencia (2026-03-04)
+## Local reference run (2026-03-05)
 
-Entorno: Windows, benchmark sobre este repositorio.
+Environment: Windows, benchmark on this repository (`-Root .`).
 
-- `index_build_ms`: `116.56`
+Command:
+
+```powershell
+./scripts/bench.ps1 -Root . -Queries @(
+  "error","TODO","config","database","index","search","rust","panic","fn","impl"
+)
+```
+
+Results:
+
+- `index_build_ms`: `338.78`
 - `queries`: `10`
-- `p95_search_ms`: `16.15`
+- `p95_search_ms`: `25`
+- `latencies_ms`: `[15, 14, 15.01, 13, 25, 15.1, 14, 14.01, 14.01, 14]`
