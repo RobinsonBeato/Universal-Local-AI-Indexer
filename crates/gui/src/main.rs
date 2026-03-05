@@ -24,6 +24,9 @@ use lupa_core::{
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 
+mod query_intent;
+use query_intent::parse_natural_query;
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -319,7 +322,13 @@ impl LupaApp {
         }
 
         let root = self.root.clone();
-        let query = self.query.clone();
+        let raw_query = self.query.clone();
+        let intent = parse_natural_query(&raw_query);
+        let query = if intent.query.trim().is_empty() {
+            raw_query.clone()
+        } else {
+            intent.query.clone()
+        };
         let limit = self.limit;
         let prefix = if self.path_prefix.trim().is_empty() {
             None
@@ -327,7 +336,7 @@ impl LupaApp {
             Some(self.path_prefix.clone())
         };
         let regex = if self.regex.trim().is_empty() {
-            None
+            intent.regex.clone()
         } else {
             Some(self.regex.clone())
         };
@@ -336,7 +345,7 @@ impl LupaApp {
 
         self.busy = true;
         self.status = format!("Buscando \"{}\"...", query);
-        self.logs.push(format!("Search -> {query}"));
+        self.logs.push(format!("Search -> {raw_query} => {query}"));
 
         std::thread::spawn(move || {
             let res = run_search(
@@ -1216,6 +1225,11 @@ impl LupaApp {
                                 .color(Color32::from_rgb(99, 102, 241)),
                         );
                         if let Some(hit) = self.selected_hit() {
+                            let active_query = self
+                                .last_search
+                                .as_ref()
+                                .map(|s| s.query.clone())
+                                .unwrap_or_else(|| self.query.clone());
                             match self.snippet_cache.get(&hit.path) {
                                 Some(SnippetState::Ready(data)) => {
                                     if data.show_match_count {
@@ -1234,7 +1248,7 @@ impl LupaApp {
                                             render_highlighted_snippet(
                                                 ui,
                                                 &data.snippet,
-                                                &self.query,
+                                                &active_query,
                                                 true,
                                             );
                                         });
@@ -1395,12 +1409,17 @@ impl LupaApp {
                     );
 
                     ui.add_space(2.0);
+                    let active_query = self
+                        .last_search
+                        .as_ref()
+                        .map(|s| s.query.clone())
+                        .unwrap_or_else(|| self.query.clone());
                     if let Some(snippet) = &hit.snippet {
-                        render_highlighted_snippet(ui, snippet, &self.query, false);
+                        render_highlighted_snippet(ui, snippet, &active_query, false);
                     } else {
                         match self.snippet_cache.get(&hit.path) {
                             Some(SnippetState::Ready(data)) => {
-                                render_highlighted_snippet(ui, &data.snippet, &self.query, false);
+                                render_highlighted_snippet(ui, &data.snippet, &active_query, false);
                             }
                             Some(SnippetState::Loading) => {
                                 ui.label(
