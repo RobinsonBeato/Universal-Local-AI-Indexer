@@ -171,6 +171,7 @@ struct GuiState {
 struct LupaApp {
     _stdout_gag: Option<gag::Gag>,
     _stderr_gag: Option<gag::Gag>,
+    app_root: PathBuf,
 
     root: String,
     query: String,
@@ -342,14 +343,21 @@ impl LupaApp {
             .push("Assistant: Thinking...".to_string());
 
         let mode = self.qa_mode;
-        let root = self.root.clone();
+        let index_root = self.root.clone();
+        let app_root = self.app_root.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<String, String> {
-                let root_path = PathBuf::from(&root);
-                let mut cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
+                let mut cfg = LupaConfig::load(&app_root).map_err(|e| e.to_string())?;
+                if cfg.qa.model_path.trim().is_empty() {
+                    let alt_root = PathBuf::from(&index_root);
+                    let alt_cfg = LupaConfig::load(&alt_root).map_err(|e| e.to_string())?;
+                    if !alt_cfg.qa.model_path.trim().is_empty() {
+                        cfg = alt_cfg;
+                    }
+                }
                 cfg.qa.mode = mode;
-                let provider = provider_from_config(root_path, cfg);
+                let provider = provider_from_config(app_root, cfg);
                 let answer = provider
                     .answer(&QaRequest {
                         document_path: path.clone(),
@@ -364,10 +372,8 @@ impl LupaApp {
 
     fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        let root = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .display()
-            .to_string();
+        let app_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = app_root.display().to_string();
         let loaded_state = load_gui_state(&root);
 
         let query = loaded_state
@@ -401,6 +407,7 @@ impl LupaApp {
         Self {
             _stdout_gag: gag::Gag::stdout().ok(),
             _stderr_gag: gag::Gag::stderr().ok(),
+            app_root,
             root: state_root,
             query,
             limit,

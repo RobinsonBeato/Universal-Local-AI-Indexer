@@ -1,0 +1,8 @@
+[qa]
+mode = "local_model"
+model_path = "%LOCALAPPDATA%\\Lupa\\models\\qwen2.5-0.5b-instruct-q4_k_m.gguf"
+endpoint = "http://127.0.0.1:8088"
+llama_server_path = "%LOCALAPPDATA%\\Lupa\\runtime\\llama-server.exe"
+auto_start_server = true
+max_tokens = 256
+timeout_ms = 12000

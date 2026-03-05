@@ -171,6 +171,36 @@ impl QaProvider for LocalModelProvider {
     }
 
     fn answer(&self, request: &QaRequest) -> Result<QaAnswer> {
+        let doc_path = resolve_doc_path(&self.project_root, &request.document_path);
+        let meta = std::fs::metadata(&doc_path)
+            .map_err(|e| anyhow!("cannot read document metadata {}: {e}", doc_path.display()))?;
+        let size = meta.len();
+        if !self.config.allows_content_extract(&doc_path, size) {
+            return Err(anyhow!(
+                "document too large for local AI context limits: {}",
+                doc_path.display()
+            ));
+        }
+
+        // Deterministic fast-path for count-style questions.
+        if let Some((needle, count)) =
+            count_word_question(&self.config, &request.question, &doc_path, self.config.max_structured_file_size_bytes)?
+        {
+            let lang = detect_lang(&request.question);
+            let answer = if lang == "es" {
+                format!("La palabra \"{needle}\" aparece {count} veces.")
+            } else {
+                format!("The word \"{needle}\" appears {count} times.")
+            };
+            return Ok(QaAnswer {
+                answer,
+                citations: vec![QaCitation {
+                    path: request.document_path.clone(),
+                    excerpt: format!("count(\"{needle}\") = {count}"),
+                }],
+            });
+        }
+
         let model_path = resolve_doc_path(&self.project_root, &expand_env_tokens(&self.config.qa.model_path));
         if model_path.as_os_str().is_empty() || self.config.qa.model_path.trim().is_empty() {
             return Err(anyhow!(
@@ -203,13 +233,18 @@ impl QaProvider for LocalModelProvider {
         }
 
         wait_for_server(endpoint, self.config.qa.timeout_ms)?;
-        let prompt = build_doc_prompt(request);
+        let content = load_document_text(&self.config, &doc_path)?;
+        if content.trim().is_empty() {
+            return Err(anyhow!("no extractable text for local AI in {}", doc_path.display()));
+        }
+        let prompt = build_doc_prompt(request, &content);
         let completion = request_completion(
             endpoint,
             &prompt,
             self.config.qa.max_tokens,
             self.config.qa.timeout_ms,
         )?;
+        let completion = sanitize_answer(&completion);
 
         Ok(QaAnswer {
             answer: completion.clone(),
@@ -221,10 +256,17 @@ impl QaProvider for LocalModelProvider {
     }
 }
 
-fn build_doc_prompt(request: &QaRequest) -> String {
+fn build_doc_prompt(request: &QaRequest, content: &str) -> String {
+    let lang = detect_lang(&request.question);
+    let context = build_context(content, &request.question, 5600);
+    let lang_rule = if lang == "es" {
+        "Respond only in Spanish."
+    } else {
+        "Respond only in English."
+    };
     format!(
-        "You are an offline document assistant. Answer briefly and cite only the provided path.\nDocument path: {}\nQuestion: {}\nAnswer:",
-        request.document_path, request.question
+        "You are an offline document assistant.\nRules:\n- {lang_rule}\n- Answer in at most 3 short bullet points.\n- Do not repeat ideas.\n- Use ONLY the provided context.\n- If answer is not in context, reply exactly: Not found in document context.\nDocument path: {}\nContext:\n{}\nQuestion: {}\nAnswer:",
+        request.document_path, context, request.question
     )
 }
 
@@ -232,10 +274,13 @@ fn request_completion(endpoint: &str, prompt: &str, max_tokens: usize, timeout_m
     let url = format!("{}/completion", endpoint.trim_end_matches('/'));
     let body = json!({
         "prompt": prompt,
-        "n_predict": max_tokens as i64,
-        "temperature": 0.2,
-        "top_p": 0.9,
-        "stop": ["\n\nUser:", "\n\nQuestion:"]
+        "n_predict": (max_tokens.min(120)) as i64,
+        "temperature": 0.05,
+        "top_p": 0.85,
+        "top_k": 30,
+        "repeat_penalty": 1.22,
+        "presence_penalty": 0.2,
+        "stop": ["\n\nUser:", "\n\nQuestion:", "\nContext:", "\nRules:", "Document path:"]
     });
     let value: Value = ureq::post(&url)
         .timeout(Duration::from_millis(timeout_ms))
@@ -256,6 +301,86 @@ fn request_completion(endpoint: &str, prompt: &str, max_tokens: usize, timeout_m
         return Err(anyhow!("empty response from local model"));
     }
     Ok(text)
+}
+
+fn sanitize_answer(raw: &str) -> String {
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let clean = line.trim();
+        if clean.is_empty() {
+            continue;
+        }
+        let key = clean.to_ascii_lowercase();
+        if seen.insert(key) {
+            out.push(clean.to_string());
+        }
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    if out.is_empty() {
+        raw.trim().chars().take(300).collect()
+    } else {
+        out.join("\n")
+    }
+}
+
+fn build_context(content: &str, question: &str, max_chars: usize) -> String {
+    let normalized = content.replace('\r', " ").replace('\n', " ");
+    let mut sentences = normalized
+        .split(['.', '!', '?', ';'])
+        .map(str::trim)
+        .filter(|s| s.len() >= 25)
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    if sentences.is_empty() {
+        return normalized.chars().take(max_chars).collect();
+    }
+
+    let keywords = extract_keywords(question);
+    if keywords.is_empty() {
+        let mut out = String::new();
+        for s in sentences.iter().take(18) {
+            if out.len() + s.len() + 2 > max_chars {
+                break;
+            }
+            if !out.is_empty() {
+                out.push_str(". ");
+            }
+            out.push_str(s);
+        }
+        return out;
+    }
+
+    let mut scored = sentences
+        .drain(..)
+        .map(|s| {
+            let lower = s.to_ascii_lowercase();
+            let score = keywords.iter().filter(|k| lower.contains(*k)).count();
+            (score, s)
+        })
+        .collect::<Vec<_>>();
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut out = String::new();
+    for (score, s) in scored.into_iter().take(28) {
+        if score == 0 && out.len() > max_chars / 2 {
+            break;
+        }
+        if out.len() + s.len() + 2 > max_chars {
+            break;
+        }
+        if !out.is_empty() {
+            out.push_str(". ");
+        }
+        out.push_str(&s);
+    }
+    if out.is_empty() {
+        normalized.chars().take(max_chars).collect()
+    } else {
+        out
+    }
 }
 
 fn server_alive(endpoint: &str) -> bool {
@@ -355,6 +480,90 @@ fn resolve_doc_path(project_root: &Path, raw: &str) -> PathBuf {
     }
 }
 
+fn load_document_text(config: &LupaConfig, path: &Path) -> Result<String> {
+    let ext = extension_of(path);
+    if config.is_text_extension(path) {
+        return read_text_limited(path, config.max_file_size_bytes as usize);
+    }
+    if ext == "pdf" {
+        return Ok(extract_pdf_text(path).unwrap_or_default());
+    }
+    if ext == "docx" {
+        return Ok(extract_docx_text(path).unwrap_or_default());
+    }
+    Ok(String::new())
+}
+
+fn count_word_question(
+    config: &LupaConfig,
+    question: &str,
+    path: &Path,
+    max_size: u64,
+) -> Result<Option<(String, usize)>> {
+    let q = question.to_ascii_lowercase();
+    let looks_like_count = q.contains("cuantas veces")
+        || q.contains("cuántas veces")
+        || q.contains("how many times")
+        || q.contains("count");
+    if !looks_like_count {
+        return Ok(None);
+    }
+    let word = extract_quoted_word(question);
+    let Some(needle) = word else {
+        return Ok(None);
+    };
+    let meta = std::fs::metadata(path)?;
+    if meta.len() > max_size {
+        return Ok(None);
+    }
+    let content = load_document_text(config, path)?;
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+    let count = count_occurrences(&content, &needle);
+    Ok(Some((needle, count)))
+}
+
+fn extract_quoted_word(s: &str) -> Option<String> {
+    let chars: Vec<char> = s.chars().collect();
+    for quote in ['"', '\'', '“', '”'] {
+        let mut start = None;
+        for (i, c) in chars.iter().enumerate() {
+            if *c == quote {
+                if let Some(st) = start {
+                    let val: String = chars[st + 1..i].iter().collect();
+                    let trimmed = val.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                    start = None;
+                } else {
+                    start = Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn count_occurrences(content: &str, needle: &str) -> usize {
+    let hay = content.to_ascii_lowercase();
+    let nd = needle.to_ascii_lowercase();
+    if nd.is_empty() {
+        return 0;
+    }
+    let mut n = 0usize;
+    let mut from = 0usize;
+    while let Some(idx) = hay[from..].find(&nd) {
+        n += 1;
+        from += idx + nd.len();
+        if from >= hay.len() {
+            break;
+        }
+    }
+    n
+}
+
 fn extension_of(path: &Path) -> String {
     path.extension()
         .and_then(|e| e.to_str())
@@ -415,6 +624,25 @@ fn extract_keywords(question: &str) -> Vec<String> {
         .filter(|w| w.len() >= 3 && !stop.contains(&w.as_str()))
         .take(10)
         .collect()
+}
+
+fn detect_lang(question: &str) -> &'static str {
+    let q = question.to_ascii_lowercase();
+    let es_hits = [
+        " que ", " como ", " cuando ", " dónde", " donde ", " resumen ", "explica", "cuantas",
+        "cuántas", "palabra", "archivo", "documento", "por que", "porque",
+    ]
+    .iter()
+    .filter(|k| q.contains(**k))
+    .count();
+    let en_hits = [
+        " what ", " how ", " when ", " where ", "summary", "explain", "word", "document", "file",
+        "why ", "count",
+    ]
+    .iter()
+    .filter(|k| q.contains(**k))
+    .count();
+    if es_hits >= en_hits { "es" } else { "en" }
 }
 
 fn human_size(bytes: u64) -> String {
