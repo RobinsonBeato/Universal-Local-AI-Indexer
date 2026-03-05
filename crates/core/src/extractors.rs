@@ -58,6 +58,9 @@ pub fn extract_docx_text(path: &Path) -> Result<String> {
 }
 
 pub fn extract_pdf_text(path: &Path) -> Result<String> {
+    // Some PDFs emit noisy glyph warnings to stderr from downstream parsers.
+    // Hold stderr during extraction to keep CLI/GUI output clean.
+    let _stderr_hold = gag::Hold::stderr().ok();
     pdf_extract::extract_text(path)
         .with_context(|| format!("no se pudo extraer texto pdf {}", path.display()))
 }

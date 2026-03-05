@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+gag.workspace = true
 pdf-extract.workspace = true
 quick-xml.workspace = true
 rayon.workspace = true

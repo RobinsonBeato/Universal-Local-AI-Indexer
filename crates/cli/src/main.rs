@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -7,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use lupa_core::{LupaConfig, LupaEngine, SearchOptions};
+use lupa_core::{BuildProgress, LupaConfig, LupaEngine, SearchOptions};
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 
 #[derive(Parser, Debug)]
@@ -106,10 +107,17 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Index(index_cmd) => match index_cmd.command {
             IndexSubcommand::Build(args) => {
-                let stats = engine.build_incremental()?;
+                let stats = if args.json {
+                    engine.build_incremental()?
+                } else {
+                    engine.build_incremental_with_progress(|p| {
+                        render_build_progress(&p);
+                    })?
+                };
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&stats)?);
                 } else {
+                    println!();
                     println!(
                         "index build: scanned={} new={} updated={} skipped={} removed={} took={}ms",
                         stats.scanned,
@@ -238,4 +246,37 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn render_build_progress(p: &BuildProgress) {
+    let percent = if p.total_files > 0 {
+        (p.scanned as f64 * 100.0 / p.total_files as f64).min(100.0)
+    } else {
+        0.0
+    };
+    let elapsed = format_ms(p.elapsed_ms);
+    let eta = p
+        .eta_ms
+        .map(format_ms)
+        .unwrap_or_else(|| "--:--".to_string());
+    print!(
+        "\rindexing {:6.2}% ({}/{}) new={} upd={} skip={} err={} elapsed={} eta={}",
+        percent,
+        p.scanned,
+        p.total_files,
+        p.indexed_new,
+        p.indexed_updated,
+        p.skipped_unchanged,
+        p.errors,
+        elapsed,
+        eta
+    );
+    let _ = io::stdout().flush();
+}
+
+fn format_ms(ms: u128) -> String {
+    let total_secs = (ms / 1000) as u64;
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    format!("{mins:02}:{secs:02}")
 }

@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct LupaConfig {
     pub excludes: Vec<String>,
-    // Extensiones que se leerán como texto para full-text en contenido.
+    // Extensions read as plain text for content full-text.
     pub include_extensions: Vec<String>,
     pub max_file_size_bytes: u64,
-    // Límite separado para formatos estructurados (pdf/docx), para no perder fragmentos.
+    // Separate size cap for structured formats (pdf/docx).
     pub max_structured_file_size_bytes: u64,
     pub hash_small_file_threshold: u64,
     pub threads: usize,
@@ -49,21 +49,19 @@ impl LupaConfig {
     pub fn load(project_root: &Path) -> Result<Self> {
         let cfg_path = project_root.join("config.toml");
         if !cfg_path.exists() {
-            return Ok(Self::default());
+            return Ok(Self::default().normalized());
         }
 
         let raw = std::fs::read_to_string(&cfg_path)
-            .with_context(|| format!("no se pudo leer {}", cfg_path.display()))?;
+            .with_context(|| format!("failed to read {}", cfg_path.display()))?;
         let cfg: Self = toml::from_str(&raw)
-            .with_context(|| format!("config.toml inválido en {}", cfg_path.display()))?;
-        Ok(cfg)
+            .with_context(|| format!("invalid config.toml at {}", cfg_path.display()))?;
+        Ok(cfg.normalized())
     }
 
     pub fn should_exclude(&self, path: &Path) -> bool {
         let lower = path.to_string_lossy().to_lowercase();
-        self.excludes
-            .iter()
-            .any(|needle| lower.contains(&needle.to_lowercase()))
+        self.excludes.iter().any(|needle| lower.contains(needle))
     }
 
     pub fn is_text_extension(&self, path: &Path) -> bool {
@@ -102,6 +100,20 @@ impl LupaConfig {
             size <= self.max_file_size_bytes
         }
     }
+
+    fn normalized(mut self) -> Self {
+        self.excludes = self
+            .excludes
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        self.include_extensions = self
+            .include_extensions
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        self
+    }
 }
 
 #[cfg(test)]
@@ -111,7 +123,7 @@ mod tests {
 
     #[test]
     fn default_excludes_match_required_paths() {
-        let cfg = LupaConfig::default();
+        let cfg = LupaConfig::default().normalized();
         for p in [
             "node_modules",
             ".git",

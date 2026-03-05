@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 use eframe::egui::{
@@ -16,7 +17,8 @@ use eframe::egui::{
 };
 use lupa_core::{
     extractors::{extract_docx_text, extract_pdf_text},
-    DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions, SearchResult,
+    BuildProgress, DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchHit, SearchOptions,
+    SearchResult,
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 
@@ -157,6 +159,8 @@ struct LupaApp {
     busy: bool,
     watch: WatchState,
     status: String,
+    build_progress: Option<BuildProgress>,
+    build_started_at: Option<Instant>,
     logs: Vec<String>,
 
     last_build: Option<IndexStats>,
@@ -202,6 +206,7 @@ enum SnippetState {
 }
 
 enum UiEvent {
+    BuildProgress(BuildProgress),
     BuildDone(Result<IndexStats, String>),
     SearchDone(Result<SearchResult, String>),
     DoctorDone(Result<DoctorReport, String>),
@@ -235,6 +240,8 @@ impl LupaApp {
             busy: false,
             watch: WatchState::default(),
             status: "Listo para buscar".to_string(),
+            build_progress: None,
+            build_started_at: None,
             logs: vec!["App iniciada".to_string()],
             last_build: None,
             last_search: None,
@@ -254,11 +261,18 @@ impl LupaApp {
         let root = self.root.clone();
         let tx = self.tx.clone();
         self.busy = true;
+        self.build_progress = None;
+        self.build_started_at = Some(Instant::now());
         self.status = "Indexando archivos...".to_string();
         self.logs.push(format!("Index build -> {root}"));
 
         std::thread::spawn(move || {
-            let res = run_build(&root);
+            let res = run_engine(&root).and_then(|engine| {
+                engine.build_incremental_with_progress(|progress| {
+                    let _ = tx.send(UiEvent::BuildProgress(progress));
+                })
+            });
+            let res = res.map_err(|e| e.to_string());
             let _ = tx.send(UiEvent::BuildDone(res));
         });
     }
@@ -455,8 +469,26 @@ impl LupaApp {
     fn drain_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
+                UiEvent::BuildProgress(progress) => {
+                    self.build_progress = Some(progress.clone());
+                    let percent = if progress.total_files > 0 {
+                        (progress.scanned as f64 * 100.0 / progress.total_files as f64).min(100.0)
+                    } else {
+                        0.0
+                    };
+                    let eta = progress
+                        .eta_ms
+                        .map(format_duration_ms)
+                        .unwrap_or_else(|| "--:--".to_string());
+                    self.status = format!(
+                        "Indexing {:.1}% ({}/{}) eta {}",
+                        percent, progress.scanned, progress.total_files, eta
+                    );
+                }
                 UiEvent::BuildDone(result) => {
                     self.busy = false;
+                    self.build_progress = None;
+                    self.build_started_at = None;
                     match result {
                         Ok(stats) => {
                             self.status = format!(
@@ -594,14 +626,31 @@ impl LupaApp {
             }
 
             let status_text = if self.busy {
-                "Indexing"
+                if let Some(p) = &self.build_progress {
+                    let percent = if p.total_files > 0 {
+                        (p.scanned as f64 * 100.0 / p.total_files as f64).min(100.0)
+                    } else {
+                        0.0
+                    };
+                    let started = self
+                        .build_started_at
+                        .map(|s| format_duration_ms(s.elapsed().as_millis()))
+                        .unwrap_or_else(|| "--:--".to_string());
+                    let eta = p
+                        .eta_ms
+                        .map(format_duration_ms)
+                        .unwrap_or_else(|| "--:--".to_string());
+                    format!("Indexing {:.1}% start+{} eta {}", percent, started, eta)
+                } else {
+                    "Indexing".to_string()
+                }
             } else if self.watch.running {
-                "Monitoring"
+                "Monitoring".to_string()
             } else {
-                "Idle"
+                "Idle".to_string()
             };
             ui.label(
-                RichText::new(status_text)
+                RichText::new(&status_text)
                     .small()
                     .color(Color32::from_rgb(160, 170, 185)),
             );
@@ -1841,6 +1890,13 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+fn format_duration_ms(ms: u128) -> String {
+    let total_secs = (ms / 1000) as u64;
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    format!("{mins:02}:{secs:02}")
+}
+
 fn short_time_label(unix_secs: u64) -> String {
     let mins = (unix_secs / 60) % 60;
     let hours = (unix_secs / 3600) % 24;
@@ -2005,12 +2061,6 @@ fn windows_path(path: &Path) -> String {
         return rest.to_string();
     }
     raw
-}
-
-fn run_build(root: &str) -> Result<IndexStats, String> {
-    run_engine(root)
-        .and_then(|engine| engine.build_incremental())
-        .map_err(|e| e.to_string())
 }
 
 fn run_search(root: &str, query: &str, options: SearchOptions) -> Result<SearchResult, String> {

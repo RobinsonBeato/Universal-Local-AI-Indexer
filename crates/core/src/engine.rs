@@ -31,6 +31,19 @@ pub struct IndexStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BuildProgress {
+    pub scanned: usize,
+    pub total_files: usize,
+    pub indexed_new: usize,
+    pub indexed_updated: usize,
+    pub skipped_unchanged: usize,
+    pub removed: usize,
+    pub errors: usize,
+    pub elapsed_ms: u128,
+    pub eta_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchHit {
     pub path: String,
     pub score: f32,
@@ -128,107 +141,172 @@ impl LupaEngine {
     }
 
     pub fn build_incremental(&self) -> Result<IndexStats> {
+        self.build_incremental_with_progress(|_| {})
+    }
+
+    pub fn build_incremental_with_progress<F>(&self, mut on_progress: F) -> Result<IndexStats>
+    where
+        F: FnMut(BuildProgress),
+    {
         let start = Instant::now();
         let (index, fields) = self.ensure_index()?;
         let mut writer = self.acquire_writer_with_retry(&index)?;
 
         let mut store = MetadataStore::open(&self.db_path)?;
-        let existing_records = store
+        let mut existing_records = store
             .all_records()?
             .into_iter()
             .map(|r| (r.path.clone(), r))
             .collect::<HashMap<_, _>>();
-
-        let snapshots = self.collect_snapshots(&existing_records);
-        let scanned = snapshots.len();
-        let skipped_unchanged = snapshots
-            .iter()
-            .filter(|s| {
-                s.prev.is_some()
-                    && s.prev
-                        .as_ref()
-                        .is_some_and(|p| p.mtime == s.mtime && p.size == s.size)
-            })
-            .count();
-        let scanned_set = snapshots
-            .iter()
-            .map(|s| s.path_str.clone())
-            .collect::<HashSet<_>>();
-
-        let candidates = snapshots
-            .into_iter()
-            .filter(|s| {
-                if let Some(prev) = &s.prev {
-                    !(prev.mtime == s.mtime && prev.size == s.size)
-                } else {
-                    true
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let prepared_results = candidates
-            .par_iter()
-            .map(|snapshot| self.prepare_doc(snapshot))
-            .collect::<Vec<_>>();
-
-        let mut errors = 0usize;
-        let mut prepared = Vec::new();
-        for result in prepared_results {
-            match result {
-                Ok(Some(doc)) => prepared.push(doc),
-                Ok(None) => {}
-                Err(_) => errors += 1,
-            }
-        }
-
+        let mut scanned = 0usize;
         let mut indexed_new = 0usize;
         let mut indexed_updated = 0usize;
-        let mut upserts = Vec::new();
-        for prepared_doc in prepared {
-            writer.delete_term(Term::from_field_text(
-                fields.path,
-                &prepared_doc.record.path,
-            ));
-            let doc = doc!(
-                fields.path => prepared_doc.record.path.clone(),
-                fields.name => prepared_doc.name,
-                fields.content => prepared_doc.content,
-                fields.mtime => prepared_doc.record.mtime
-            );
-            writer.add_document(doc)?;
+        let mut skipped_unchanged = 0usize;
+        let mut errors = 0usize;
+        let mut removed = 0usize;
+        let total_files = self.count_files_for_build();
+        let mut last_progress_emit = Instant::now();
 
-            if prepared_doc.is_new {
-                indexed_new += 1;
-            } else {
-                indexed_updated += 1;
+        const SNAPSHOT_BATCH_SIZE: usize = 256;
+        let mut snapshots = Vec::with_capacity(SNAPSHOT_BATCH_SIZE);
+
+        for entry in WalkDir::new(&self.project_root)
+            .into_iter()
+            .filter_entry(|entry| !self.config.should_exclude(entry.path()))
+            .filter_map(|entry| entry.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
             }
-            upserts.push(prepared_doc.record);
+
+            let path = entry.path().to_path_buf();
+            let meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => {
+                    errors += 1;
+                    continue;
+                }
+            };
+            let mtime = match meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            {
+                Some(d) => d.as_secs() as i64,
+                None => {
+                    errors += 1;
+                    continue;
+                }
+            };
+            let size = meta.len();
+            let path_str = normalize_path(&path);
+            let prev = existing_records.remove(&path_str);
+
+            scanned += 1;
+            if prev
+                .as_ref()
+                .is_some_and(|p| p.mtime == mtime && p.size == size)
+            {
+                skipped_unchanged += 1;
+                continue;
+            }
+
+            snapshots.push(FileSnapshot {
+                path,
+                path_str,
+                mtime,
+                size,
+                prev,
+            });
+
+            if snapshots.len() >= SNAPSHOT_BATCH_SIZE {
+                let (new_count, updated_count, skipped_count, error_count) =
+                    self.flush_snapshot_batch(&mut writer, &fields, &mut store, &mut snapshots)?;
+                indexed_new += new_count;
+                indexed_updated += updated_count;
+                skipped_unchanged += skipped_count;
+                errors += error_count;
+                Self::emit_build_progress(
+                    &mut on_progress,
+                    &start,
+                    &mut last_progress_emit,
+                    false,
+                    scanned,
+                    total_files,
+                    indexed_new,
+                    indexed_updated,
+                    skipped_unchanged,
+                    removed,
+                    errors,
+                );
+            }
         }
 
-        let removed_paths = existing_records
-            .keys()
-            .filter(|p| !scanned_set.contains(*p))
-            .cloned()
-            .collect::<Vec<_>>();
-        for p in &removed_paths {
-            writer.delete_term(Term::from_field_text(fields.path, p));
+        if !snapshots.is_empty() {
+            let (new_count, updated_count, skipped_count, error_count) =
+                self.flush_snapshot_batch(&mut writer, &fields, &mut store, &mut snapshots)?;
+            indexed_new += new_count;
+            indexed_updated += updated_count;
+            skipped_unchanged += skipped_count;
+            errors += error_count;
+            Self::emit_build_progress(
+                &mut on_progress,
+                &start,
+                &mut last_progress_emit,
+                false,
+                scanned,
+                total_files,
+                indexed_new,
+                indexed_updated,
+                skipped_unchanged,
+                removed,
+                errors,
+            );
         }
 
-        writer.commit()?;
-
-        if !upserts.is_empty() {
-            store.upsert_many(&upserts)?;
+        let removed_paths = existing_records.into_keys().collect::<Vec<_>>();
+        const REMOVE_BATCH_SIZE: usize = 5000;
+        for chunk in removed_paths.chunks(REMOVE_BATCH_SIZE) {
+            for p in chunk {
+                writer.delete_term(Term::from_field_text(fields.path, p));
+            }
+            writer.commit()?;
+            store.remove_many(chunk)?;
+            removed += chunk.len();
+            Self::emit_build_progress(
+                &mut on_progress,
+                &start,
+                &mut last_progress_emit,
+                false,
+                scanned,
+                total_files,
+                indexed_new,
+                indexed_updated,
+                skipped_unchanged,
+                removed,
+                errors,
+            );
         }
-        if !removed_paths.is_empty() {
-            store.remove_many(&removed_paths)?;
-        }
+        Self::emit_build_progress(
+            &mut on_progress,
+            &start,
+            &mut last_progress_emit,
+            true,
+            scanned,
+            total_files,
+            indexed_new,
+            indexed_updated,
+            skipped_unchanged,
+            removed,
+            errors,
+        );
 
         Ok(IndexStats {
             scanned,
             indexed_new,
             indexed_updated,
             skipped_unchanged,
-            removed: removed_paths.len(),
+            removed,
             errors,
             duration_ms: start.elapsed().as_millis(),
         })
@@ -250,6 +328,7 @@ impl LupaEngine {
 
         let mut upserts = Vec::new();
         let mut removals = Vec::new();
+        let mut snapshots = Vec::new();
 
         for path in paths {
             let path_str = normalize_path(&path);
@@ -294,15 +373,22 @@ impl LupaEngine {
                 }
             }
 
-            let snapshot = FileSnapshot {
+            snapshots.push(FileSnapshot {
                 path: path.clone(),
                 path_str: path_str.clone(),
                 mtime,
                 size,
                 prev,
-            };
+            });
+        }
 
-            match self.prepare_doc(&snapshot) {
+        let prepared_results = snapshots
+            .par_iter()
+            .map(|snapshot| self.prepare_doc(snapshot))
+            .collect::<Vec<_>>();
+
+        for result in prepared_results {
+            match result {
                 Ok(Some(prepared_doc)) => {
                     writer.delete_term(Term::from_field_text(
                         fields.path,
@@ -405,12 +491,14 @@ impl LupaEngine {
             }
 
             if let Some(re) = &regex {
-                let content = self
-                    .load_query_content(Path::new(&path))
-                    .unwrap_or_default();
-                let hay = format!("{}\n{}", path, content);
-                if !re.is_match(&hay) {
-                    continue;
+                // Fast path: if regex already matches path, avoid reading file content.
+                if !re.is_match(&path) {
+                    let content = self
+                        .load_query_content(Path::new(&path))
+                        .unwrap_or_default();
+                    if !re.is_match(&content) {
+                        continue;
+                    }
                 }
             }
 
@@ -426,12 +514,19 @@ impl LupaEngine {
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         hits.truncate(opts.limit);
 
-        if opts.highlight {
-            for hit in &mut hits {
-                let content = self
-                    .load_query_content(Path::new(&hit.path))
-                    .unwrap_or_default();
-                hit.snippet = Some(highlight_snippet(&content, query));
+        if opts.highlight && !hits.is_empty() {
+            let snippets = hits
+                .par_iter()
+                .map(|hit| {
+                    let content = self
+                        .load_query_content(Path::new(&hit.path))
+                        .unwrap_or_default();
+                    highlight_snippet(&content, query)
+                })
+                .collect::<Vec<_>>();
+
+            for (hit, snippet) in hits.iter_mut().zip(snippets) {
+                hit.snippet = Some(snippet);
             }
         }
 
@@ -510,42 +605,61 @@ impl LupaEngine {
         Ok((index, resolve_fields(&schema)?))
     }
 
-    fn collect_snapshots(
+    fn flush_snapshot_batch(
         &self,
-        existing_records: &HashMap<String, FileRecord>,
-    ) -> Vec<FileSnapshot> {
-        self.walk_files()
-            .into_iter()
-            .filter_map(|path| {
-                let meta = std::fs::metadata(&path).ok()?;
-                let mtime = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?
-                    .as_secs() as i64;
-                let size = meta.len();
-                let path_str = normalize_path(&path);
-                let prev = existing_records.get(&path_str).cloned();
-                Some(FileSnapshot {
-                    path,
-                    path_str,
-                    mtime,
-                    size,
-                    prev,
-                })
-            })
-            .collect()
-    }
+        writer: &mut tantivy::IndexWriter,
+        fields: &Fields,
+        store: &mut MetadataStore,
+        snapshots: &mut Vec<FileSnapshot>,
+    ) -> Result<(usize, usize, usize, usize)> {
+        let prepared_results = snapshots
+            .par_iter()
+            .map(|snapshot| self.prepare_doc(snapshot))
+            .collect::<Vec<_>>();
 
-    fn walk_files(&self) -> Vec<PathBuf> {
-        WalkDir::new(&self.project_root)
-            .into_iter()
-            .filter_entry(|entry| !self.config.should_exclude(entry.path()))
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_file())
-            .map(|entry| entry.path().to_path_buf())
-            .collect::<Vec<_>>()
+        let mut indexed_new = 0usize;
+        let mut indexed_updated = 0usize;
+        let mut skipped_unchanged = 0usize;
+        let mut errors = 0usize;
+        let mut upserts = Vec::new();
+
+        for result in prepared_results {
+            match result {
+                Ok(Some(prepared_doc)) => {
+                    writer.delete_term(Term::from_field_text(
+                        fields.path,
+                        &prepared_doc.record.path,
+                    ));
+                    let doc = doc!(
+                        fields.path => prepared_doc.record.path.clone(),
+                        fields.name => prepared_doc.name,
+                        fields.content => prepared_doc.content,
+                        fields.mtime => prepared_doc.record.mtime
+                    );
+                    writer.add_document(doc)?;
+                    if prepared_doc.is_new {
+                        indexed_new += 1;
+                    } else {
+                        indexed_updated += 1;
+                    }
+                    upserts.push(prepared_doc.record);
+                }
+                Ok(None) => {
+                    skipped_unchanged += 1;
+                }
+                Err(_) => {
+                    errors += 1;
+                }
+            }
+        }
+
+        if !upserts.is_empty() {
+            writer.commit()?;
+            store.upsert_many(&upserts)?;
+        }
+        snapshots.clear();
+
+        Ok((indexed_new, indexed_updated, skipped_unchanged, errors))
     }
 
     fn collect_files_from_dirty_input(&self, dirty_paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -587,6 +701,55 @@ impl LupaEngine {
         out
     }
 
+    fn count_files_for_build(&self) -> usize {
+        WalkDir::new(&self.project_root)
+            .into_iter()
+            .filter_entry(|entry| !self.config.should_exclude(entry.path()))
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+            .count()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_build_progress<F>(
+        on_progress: &mut F,
+        start: &Instant,
+        last_emit: &mut Instant,
+        force: bool,
+        scanned: usize,
+        total_files: usize,
+        indexed_new: usize,
+        indexed_updated: usize,
+        skipped_unchanged: usize,
+        removed: usize,
+        errors: usize,
+    ) where
+        F: FnMut(BuildProgress),
+    {
+        if !force && last_emit.elapsed().as_millis() < 250 {
+            return;
+        }
+        *last_emit = Instant::now();
+        let elapsed_ms = start.elapsed().as_millis();
+        let eta_ms = if scanned > 0 && total_files > scanned {
+            let remaining = total_files - scanned;
+            Some((elapsed_ms * remaining as u128) / scanned as u128)
+        } else {
+            Some(0)
+        };
+        on_progress(BuildProgress {
+            scanned,
+            total_files,
+            indexed_new,
+            indexed_updated,
+            skipped_unchanged,
+            removed,
+            errors,
+            elapsed_ms,
+            eta_ms,
+        });
+    }
+
     fn prepare_doc(&self, snapshot: &FileSnapshot) -> Result<Option<PreparedDoc>> {
         let name = snapshot
             .path
@@ -598,7 +761,7 @@ impl LupaEngine {
         let mut content = String::new();
         let mut preloaded_bytes = None;
 
-        if snapshot.size <= self.config.hash_small_file_threshold {
+        if snapshot.prev.is_some() && snapshot.size <= self.config.hash_small_file_threshold {
             let bytes = std::fs::read(&snapshot.path)
                 .with_context(|| format!("no se pudo leer {}", snapshot.path.display()))?;
             hash = Some(format!("{:x}", xxh3_64(&bytes)));

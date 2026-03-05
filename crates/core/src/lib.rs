@@ -4,4 +4,6 @@ pub mod extractors;
 pub mod metadata;
 
 pub use config::LupaConfig;
-pub use engine::{DoctorReport, IndexStats, LupaEngine, SearchHit, SearchOptions, SearchResult};
+pub use engine::{
+    BuildProgress, DoctorReport, IndexStats, LupaEngine, SearchHit, SearchOptions, SearchResult,
+};
