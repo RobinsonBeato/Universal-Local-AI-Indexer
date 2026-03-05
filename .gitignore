@@ -30,6 +30,12 @@ venv/
 # Lupa runtime data (local index + metadata)
 .lupa/
 
+# Optional local AI artifacts (never commit)
+models/
+runtime/
+third_party/llama/
+scripts/ai/tmp/
+
 # Visual Studio Code
 .vscode/
 .history/

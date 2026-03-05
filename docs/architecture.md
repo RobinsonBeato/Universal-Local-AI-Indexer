@@ -2,47 +2,96 @@
 
 ## Overview
 
-`lupa` uses a three-layer architecture:
+`lupa` is organized in three crates:
 
-1. `crates/core` (`lupa-core`): indexing, storage, and query.
-2. `crates/cli` (`lupa`): command-line interface.
-3. `crates/gui` (`lupa-gui`): desktop interface on top of the same core.
+1. `crates/core` (`lupa-core`): indexing, storage, search, and QA providers.
+2. `crates/cli` (`lupa`): command-line workflows.
+3. `crates/gui` (`lupa-gui`): desktop interface using the same core.
 
 ## Storage model
 
 ### Tantivy index (disk)
 
-- Location: `.lupa/index/`
-- Fields:
+- Path: `.lupa/index/`
+- Schema fields:
   - `path` (`STRING | STORED`)
   - `name` (`TEXT | STORED`)
-  - `content` (`TEXT | STORED`)
+  - `content` (`TEXT`)
+  - `mtime` (`FAST | STORED`)
 
 ### SQLite metadata
 
-- Location: `.lupa/metadata.db`
-- `files` table:
+- Path: `.lupa/metadata.db`
+- Main table `files`:
   - `path` (PK)
   - `mtime`
   - `size`
-  - `hash` (optional)
+  - `hash`
   - `indexed_at`
 
-## Incremental strategy
+## Indexing pipeline
 
-1. Traverse the filesystem with `walkdir` applying excludes (without restricting file types).
-2. Compare against previous metadata (`mtime + size`).
-3. If a file is small, compute `xxhash` to avoid reindexing from noisy timestamp changes.
-4. Reindex only new/changed files.
-5. Remove deleted paths from Tantivy and SQLite.
+1. Crawl filesystem with `walkdir` and configured excludes.
+2. Compare file state (`mtime + size`) against SQLite metadata.
+3. Optionally hash small files (`xxhash`) to avoid false-positive updates.
+4. Extract content (text + optional structured extraction for `pdf/docx`).
+5. Update Tantivy docs and SQLite metadata.
+6. Remove deleted entries from both stores.
 
-Note: all files are indexed by name/path. Content full-text is applied only to configured text extensions.
-Additionally, real text extraction from `docx` and `pdf` is enabled by default.
+Modes:
 
-## Concurrency
+- `index build`: fast metadata pass (quick readiness).
+- `index backfill`: deeper content extraction pass.
+- `index watch`: event-driven incremental updates with dirty-path batching.
 
-- Parallel document preprocessing (read + hash) with `rayon`.
-- Single Tantivy writer for index writes (consistent commit model).
+## Search path
+
+1. Parse user query with Tantivy parser (`name`, `path`, `content`).
+2. Retrieve top docs.
+3. Apply optional filters (`path_prefix`, `regex`, `limit`).
+4. Rerank with heuristics (name/path match + recency).
+5. Optionally compute snippets/highlights.
+
+## QA architecture (Doc Chat)
+
+Core exposes a provider interface:
+
+- `QaProvider` trait
+- `ExtractiveProvider`
+- `LocalModelProvider`
+
+Selection is runtime-configurable with `config.toml`:
+
+- `qa.mode = "extractive"`: no model, deterministic and lightweight.
+- `qa.mode = "local_model"`: local `llama-server` + GGUF model.
+
+### Extractive provider
+
+- Uses local file metadata and extracted snippets.
+- Handles count-style questions deterministically.
+- No external process.
+
+### Local model provider
+
+- Uses local runtime endpoint (`qa.endpoint`, default `127.0.0.1:8088`).
+- Can auto-start `llama-server` (`qa.auto_start_server = true`).
+- Uses document-aware prompt context.
+- Applies anti-repetition settings and answer sanitization.
+- Keeps inference fully offline.
+
+## GUI integration notes
+
+- QA requests are async and non-blocking for UI responsiveness.
+- Chat panel is bound to selected document.
+- Switching selected file closes current doc chat context.
+- Chat mode toggle in UI (`Extractive` / `Local AI`) maps to `qa.mode`.
+
+## Concurrency and performance
+
+- `rayon` for parallel preprocessing/extraction.
+- Single Tantivy writer for consistency and lock safety.
+- Incremental update batches minimize full rebuilds.
+- UI virtualization keeps large result sets responsive.
 
 ## Privacy defaults
 
@@ -57,16 +106,9 @@ Default excludes:
 - `Windows`
 - `System32`
 
-## CLI commands
-
-- `lupa index build`: manual incremental indexing.
-- `lupa index watch`: periodic incremental loop.
-- `lupa search "<query>"`: full-text search with optional JSON output.
-- `lupa doctor`: health checks for paths/permissions/index/db.
-
 ## JSON output stability
 
-`search --json` returns a stable structure:
+`search --json` contract:
 
 - `query`
 - `total_hits`

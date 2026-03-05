@@ -1,43 +1,44 @@
 # Universal Local AI Indexer (`lupa`)
 
-Local file indexer and search engine for Windows (also portable to Linux/macOS), offline-first, with no AI and no external services.
+Fast local indexing and search for Windows (portable architecture), offline-first and privacy-first.
 
-## Goals
+`lupa` supports two document Q&A modes:
 
-- Offline-first: no external APIs, no file uploads, no telemetry by default.
-- $0 cost: no models, embeddings, vector DB, or cloud.
-- Ultra-fast: Tantivy full-text + SQLite metadata + incremental indexing.
-- Privacy by default: sensitive excludes are preconfigured.
+- `Extractive` (no model, fastest startup, no extra downloads)
+- `Local AI` (optional GGUF model, still fully offline)
 
-## What it indexes
+No cloud calls, no telemetry by default, no external services required.
 
-- All file types by `name` and `path` (includes Word files, images, binaries, etc.).
-- Full-text content for:
-  - configured text extensions (`txt`, `md`, `log`, source code, etc.)
-  - `docx` (real internal text)
-  - `pdf` (real internal text)
+## Core principles
+
+- Offline-first
+- Zero cloud cost
+- Fast incremental indexing
+- Stable JSON output for automation
+- Privacy by default (sensible excludes)
+
+## What gets indexed
+
+- File name + full path for all file types.
+- Text content for configured text extensions.
+- Text extraction for `pdf` and `docx` (size-limited by config).
 
 ## Quickstart
 
-### 1) Build
+### 1) Build and run
 
 ```bash
 cargo build --release -p lupa
-```
-
-GUI (desktop):
-
-```bash
 cargo run -p lupa-gui
 ```
 
-### 2) First-time indexing
+### 2) Initial index
 
 ```bash
 cargo run -p lupa -- index build
 ```
 
-JSON output:
+JSON:
 
 ```bash
 cargo run -p lupa -- index build --json
@@ -49,21 +50,19 @@ cargo run -p lupa -- index build --json
 cargo run -p lupa -- search "connection error" --limit 20 --highlight --stats
 ```
 
-JSON output for scripts:
+JSON:
 
 ```bash
 cargo run -p lupa -- search "query" --json
 ```
 
-### 4) Watch mode (incremental)
+### 4) Keep index fresh
 
 ```bash
 cargo run -p lupa -- index watch --interval-secs 2
 ```
 
-`index watch` uses filesystem events + a `dirty paths` queue to reindex only changed files.
-
-### 5) Local diagnostics
+### 5) Validate environment
 
 ```bash
 cargo run -p lupa -- doctor
@@ -72,58 +71,61 @@ cargo run -p lupa -- doctor
 ## CLI commands
 
 - `lupa index build`
+- `lupa index backfill`
 - `lupa index watch`
 - `lupa search "<query>" [--json] [--limit N] [--path-prefix ...] [--regex ...] [--highlight] [--stats]`
 - `lupa doctor`
 
-## Graphical Interface
+## GUI features
 
-The `lupa-gui` app provides:
+`lupa-gui` includes:
 
-- root selector
-- `Index Build`
-- `Watch Start/Stop`
-- `Doctor`
-- search with `limit`, `path_prefix`, `regex`, `highlight`
-- results panel + activity panel
-- side preview for the selected result:
-  - contextual snippet around the query (text/docx/pdf)
-  - enlarged image preview when available
-  - metadata + quick actions (`Open`, `Folder`)
+- root selector and index controls (`Build`, `Monitor`, `Doctor`)
+- natural query parsing + suggestions
+- categories and advanced filters
+- virtualized result list for smooth scrolling
+- preview panel with metadata, snippets, image preview, and quick actions
+- `DOC CHAT` panel for selected document Q&A
 
-### Doc Chat modes
+## Doc Chat modes
 
-Right panel `DOC CHAT` supports two modes:
+### Extractive mode
 
-- `Extractive`: no model, answers from local snippets/metadata.
-- `Local AI`: uses local `llama-server` + GGUF model (offline).
+- No model download.
+- Fast and deterministic.
+- Answers from local snippets and file metadata.
 
-You can switch modes directly in the chat panel.
+### Local AI mode
 
-## Local AI one-time setup (Windows)
+- Uses local `llama-server` + GGUF model.
+- No internet during inference.
+- Uses selected document context and returns concise answers.
+- Honors question language (`es` / `en`) in current implementation.
 
-Install runtime + tiny model once:
+Switch mode directly inside `DOC CHAT`.
+
+## Local AI setup (Windows, one-time)
+
+Use the smallest default profile (Qwen 0.5B Q4):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ai\setup-local-ai.ps1
 ```
 
-This installs files in:
+Installed outside the repository:
 
-- `%LOCALAPPDATA%\Lupa\runtime\llama-server.exe`
+- `%LOCALAPPDATA%\Lupa\runtime\` (runtime binaries and required DLLs)
 - `%LOCALAPPDATA%\Lupa\models\qwen2.5-0.5b-instruct-q4_k_m.gguf`
 
-Then in GUI, open `DOC CHAT` and select `Local AI`.
-
-Optional: run server manually for debugging:
+Optional manual launch:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ai\run-local-ai-server.ps1
 ```
 
-## Configuration (optional `config.toml`)
+## `config.toml`
 
-If present in the project root, it is loaded automatically.
+`lupa` loads `config.toml` from the app root.
 
 ```toml
 excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
@@ -132,32 +134,46 @@ max_file_size_bytes = 2097152
 max_structured_file_size_bytes = 10485760
 hash_small_file_threshold = 65536
 threads = 0
+
+[qa]
+mode = "extractive" # "extractive" | "local_model"
+model_path = "%LOCALAPPDATA%\\Lupa\\models\\qwen2.5-0.5b-instruct-q4_k_m.gguf"
+endpoint = "http://127.0.0.1:8088"
+llama_server_path = "%LOCALAPPDATA%\\Lupa\\runtime\\llama-server.exe"
+auto_start_server = true
+max_tokens = 256
+timeout_ms = 12000
 ```
 
-- `threads = 0`: uses available CPU cores.
-- `hash_small_file_threshold`: for small files, computes `xxhash` to avoid reindexing when content did not change.
-- `max_structured_file_size_bytes`: limit for `pdf/docx` text extraction (increase it if snippets are missing in large files).
+Notes:
 
-## Default excludes (privacy)
+- `threads = 0` uses available CPU cores.
+- `max_structured_file_size_bytes` affects `pdf/docx` extraction budget.
+- `qa.mode = "extractive"` keeps startup light and avoids model usage.
 
-- `node_modules`
-- `.git`
-- `target`
-- `.lupa`
-- `AppData`
-- `Program Files`
-- `Windows`
-- `System32`
+## Troubleshooting Local AI
 
-## Architecture
+- `qa.mode=local_model but qa.model_path is empty`
+  - Ensure `[qa]` exists in `config.toml`.
+- `local model server did not become ready`
+  - Check `%LOCALAPPDATA%\Lupa\runtime\` has full runtime, not only one `.exe`.
+  - Ensure VC++ runtime is installed (`Microsoft.VCRedist.2015+.x64`).
+  - Increase `qa.timeout_ms` to `20000` for slower machines.
+- Repetitive answers
+  - Keep `max_tokens` moderate (e.g. `120-256`).
+  - Use explicit questions tied to selected document.
 
-Summary: [docs/architecture.md](docs/architecture.md)
+## Privacy and repository safety
 
-## Basic benchmarks
+- Model/runtime files are installed in `%LOCALAPPDATA%`, not in this repo.
+- Do not commit local artifacts under `models/`, `runtime/`, or temporary AI folders.
 
-Guide and script: [docs/benchmarks.md](docs/benchmarks.md)
+## Additional docs
 
-## DoD verification
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
+
+## Quality gates
 
 ```bash
 cargo fmt --all --check
