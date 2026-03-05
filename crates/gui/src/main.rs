@@ -23,6 +23,7 @@ use lupa_core::{
     SearchResult,
 };
 use notify::{recommended_watcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
 
 mod query_intent;
 mod suggest;
@@ -145,7 +146,7 @@ struct WatchState {
     stop: Option<Arc<AtomicBool>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum FileFilter {
     All,
     Documents,
@@ -153,6 +154,18 @@ enum FileFilter {
     Images,
     Code,
     Media,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct GuiState {
+    root: String,
+    query: String,
+    limit: usize,
+    path_prefix: String,
+    regex: String,
+    highlight: bool,
+    selected_filter: FileFilter,
+    recent_queries: Vec<String>,
 }
 
 struct LupaApp {
@@ -190,6 +203,8 @@ struct LupaApp {
 
     tx: Sender<UiEvent>,
     rx: Receiver<UiEvent>,
+    last_state_snapshot: Option<GuiState>,
+    last_state_save: Instant,
 }
 
 enum Thumbnail {
@@ -263,17 +278,46 @@ impl LupaApp {
             .unwrap_or_else(|_| PathBuf::from("."))
             .display()
             .to_string();
+        let loaded_state = load_gui_state(&root);
+
+        let query = loaded_state
+            .as_ref()
+            .map(|s| s.query.clone())
+            .unwrap_or_default();
+        let limit = loaded_state.as_ref().map(|s| s.limit).unwrap_or(20);
+        let path_prefix = loaded_state
+            .as_ref()
+            .map(|s| s.path_prefix.clone())
+            .unwrap_or_default();
+        let regex = loaded_state
+            .as_ref()
+            .map(|s| s.regex.clone())
+            .unwrap_or_default();
+        let highlight = loaded_state.as_ref().map(|s| s.highlight).unwrap_or(false);
+        let selected_filter = loaded_state
+            .as_ref()
+            .map(|s| s.selected_filter)
+            .unwrap_or(FileFilter::All);
+        let recent_queries = loaded_state
+            .as_ref()
+            .map(|s| s.recent_queries.clone())
+            .unwrap_or_default();
+        let state_root = loaded_state
+            .as_ref()
+            .map(|s| s.root.clone())
+            .filter(|r| !r.trim().is_empty())
+            .unwrap_or(root);
 
         Self {
             _stdout_gag: gag::Gag::stdout().ok(),
             _stderr_gag: gag::Gag::stderr().ok(),
-            root,
-            query: String::new(),
-            limit: 20,
-            path_prefix: String::new(),
-            regex: String::new(),
-            highlight: false,
-            recent_queries: Vec::new(),
+            root: state_root,
+            query,
+            limit,
+            path_prefix,
+            regex,
+            highlight,
+            recent_queries,
             suggestions: Vec::new(),
             suggest_request_id: 0,
             selected_suggestion: 0,
@@ -289,12 +333,14 @@ impl LupaApp {
             last_doctor: None,
             thumbnails: HashMap::new(),
             selected_path: None,
-            selected_filter: FileFilter::All,
+            selected_filter,
             preview_cache: HashMap::new(),
             large_previews: HashMap::new(),
             snippet_cache: HashMap::new(),
             tx,
             rx,
+            last_state_snapshot: loaded_state,
+            last_state_save: Instant::now(),
         }
     }
 
@@ -427,6 +473,35 @@ impl LupaApp {
         if run_search {
             self.spawn_search();
             self.suggestions.clear();
+        }
+    }
+
+    fn current_gui_state(&self) -> GuiState {
+        GuiState {
+            root: self.root.clone(),
+            query: self.query.clone(),
+            limit: self.limit,
+            path_prefix: self.path_prefix.clone(),
+            regex: self.regex.clone(),
+            highlight: self.highlight,
+            selected_filter: self.selected_filter,
+            recent_queries: self.recent_queries.clone(),
+        }
+    }
+
+    fn maybe_persist_state(&mut self) {
+        if self.last_state_save.elapsed() < Duration::from_millis(900) {
+            return;
+        }
+        self.last_state_save = Instant::now();
+
+        let state = self.current_gui_state();
+        if self.last_state_snapshot.as_ref() == Some(&state) {
+            return;
+        }
+
+        if save_gui_state(&state).is_ok() {
+            self.last_state_snapshot = Some(state);
         }
     }
 
@@ -1941,6 +2016,7 @@ impl eframe::App for LupaApp {
                 });
             });
 
+        self.maybe_persist_state();
         ctx.request_repaint_after(Duration::from_millis(120));
     }
 }
@@ -2304,6 +2380,24 @@ fn extension_of(path: &str) -> String {
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default()
+}
+
+fn gui_state_file(root: &str) -> PathBuf {
+    let dir = PathBuf::from(root).join(".lupa");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("gui_state.json")
+}
+
+fn load_gui_state(root: &str) -> Option<GuiState> {
+    let file = gui_state_file(root);
+    let raw = fs::read_to_string(file).ok()?;
+    serde_json::from_str::<GuiState>(&raw).ok()
+}
+
+fn save_gui_state(state: &GuiState) -> Result<(), String> {
+    let file = gui_state_file(&state.root);
+    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    fs::write(file, raw).map_err(|e| e.to_string())
 }
 
 struct FileMetaLabels {
