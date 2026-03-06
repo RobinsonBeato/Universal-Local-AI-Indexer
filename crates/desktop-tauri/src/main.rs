@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use lupa_core::{DoctorReport, IndexStats, LupaConfig, LupaEngine, SearchOptions, SearchResult};
-use serde::Deserialize;
+use lupa_core::{
+    provider_from_config, DoctorReport, IndexStats, LupaConfig, LupaEngine, QaMode, QaRequest,
+    SearchOptions, SearchResult,
+};
+use serde::{Deserialize, Serialize};
 use tauri::ClipboardManager;
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +38,26 @@ struct PathRequest {
 struct OpenAtMatchRequest {
     path: String,
     query: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AskDocumentRequest {
+    root: String,
+    document_path: String,
+    question: String,
+    mode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AskDocumentResponse {
+    answer: String,
+    citations: Vec<AskDocumentCitation>,
+}
+
+#[derive(Debug, Serialize)]
+struct AskDocumentCitation {
+    path: String,
+    excerpt: String,
 }
 
 fn engine_for(root: &str) -> Result<LupaEngine, String> {
@@ -225,6 +248,42 @@ fn pick_folder() -> Result<Option<String>, String> {
     Ok(picked)
 }
 
+#[tauri::command]
+fn ask_document(req: AskDocumentRequest) -> Result<AskDocumentResponse, String> {
+    let root_path = if req.root.trim().is_empty() {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else {
+        PathBuf::from(&req.root)
+    };
+
+    let mut cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
+    let mode = match req.mode.as_deref() {
+        Some("local_model") => QaMode::LocalModel,
+        _ => QaMode::Extractive,
+    };
+    cfg.qa.mode = mode;
+
+    let provider = provider_from_config(root_path, cfg);
+    let answer = provider
+        .answer(&QaRequest {
+            document_path: req.document_path,
+            question: req.question,
+        })
+        .map_err(|e| e.to_string())?;
+
+    Ok(AskDocumentResponse {
+        answer: answer.answer,
+        citations: answer
+            .citations
+            .into_iter()
+            .map(|c| AskDocumentCitation {
+                path: c.path,
+                excerpt: c.excerpt,
+            })
+            .collect(),
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -236,7 +295,8 @@ fn main() {
             open_folder,
             copy_path,
             open_at_match,
-            pick_folder
+            pick_folder,
+            ask_document
         ])
         .run(tauri::generate_context!())
         .expect("failed to run lupa desktop");

@@ -31,6 +31,8 @@ const EMPTY = {
     match_count: null,
     chat_mode: "extractive",
     chat_messages: [],
+    chat_input: "",
+    chat_busy: false,
   },
 };
 
@@ -501,6 +503,9 @@ class LupaShell extends HTMLElement {
     this.state.right_panel.snippet = item.snippet || null;
     this.state.right_panel.match_count = item.snippet ? 1 : 0;
     this.state.right_panel.tab = "preview";
+    this.state.right_panel.chat_input = "";
+    this.state.right_panel.chat_busy = false;
+    this.state.right_panel.chat_messages = [];
     if (keepViewport) {
       this._ensureSelectedVisibleAfterPaint = true;
     }
@@ -688,6 +693,65 @@ class LupaShell extends HTMLElement {
       if (this.state.top.busy) return;
       await this.runBuild(true);
     }, 4000);
+  }
+
+  pushChatMessage(role, text) {
+    const rp = this.state.right_panel;
+    const safeRole = role === "user" || role === "assistant" || role === "system" ? role : "assistant";
+    const safeText = String(text || "").trim();
+    if (!safeText) return;
+    if (!Array.isArray(rp.chat_messages)) rp.chat_messages = [];
+    rp.chat_messages.push({ role: safeRole, text: safeText });
+    if (rp.chat_messages.length > 20) {
+      rp.chat_messages = rp.chat_messages.slice(-20);
+    }
+  }
+
+  async sendChatMessage(rawQuestion) {
+    const rp = this.state.right_panel;
+    const question = String(rawQuestion || "").trim();
+    if (!question) return;
+    if (!rp.selected_path) {
+      this.state.app.status = "Select a file first";
+      this.paint();
+      return;
+    }
+    if (rp.chat_busy) return;
+
+    this.pushChatMessage("user", question);
+    rp.chat_input = "";
+    rp.chat_busy = true;
+    this.state.app.status = "Asking document...";
+    this.paint();
+
+    if (this.mode !== "tauri") {
+      this.pushChatMessage("assistant", "Desktop mode required for document chat.");
+      rp.chat_busy = false;
+      this.state.app.status = "Chat requires desktop mode";
+      this.paint();
+      return;
+    }
+
+    try {
+      const res = await invokeDesktop("ask_document", {
+        req: {
+          root: this.state.app.root || "",
+          document_path: rp.selected_path,
+          question,
+          mode: rp.chat_mode || "extractive",
+        },
+      });
+      const answer = String((res && res.answer) || "").trim() || "No answer.";
+      this.pushChatMessage("assistant", answer);
+      this.state.app.status = "Chat answer ready";
+    } catch (err) {
+      const msg = `Chat error: ${err}`;
+      this.pushChatMessage("assistant", msg);
+      this.state.app.status = msg;
+    } finally {
+      rp.chat_busy = false;
+      this.paint();
+    }
   }
 }
 
@@ -905,10 +969,13 @@ class LupaRight extends HTMLElement {
       : `<div class="preview-icon">${extLabel(rp.file_type)}</div><div class="preview-text">No preview available</div>`;
 
     const messages = (rp.chat_messages || [])
-      .slice(-8)
-      .map((m, idx) => {
-        const cls = idx % 2 === 0 ? "assistant" : "user";
-        return `<div class="chat-bubble ${cls}">${esc(m)}</div>`;
+      .slice(-12)
+      .map((m) => {
+        if (m && typeof m === "object") {
+          const cls = m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant";
+          return `<div class="chat-bubble ${cls}">${esc(m.text || "")}</div>`;
+        }
+        return `<div class="chat-bubble assistant">${esc(String(m || ""))}</div>`;
       })
       .join("");
 
@@ -984,19 +1051,19 @@ class LupaRight extends HTMLElement {
               </div>
             </div>
             <div class="chat-quick">
-              <button class="quick active">Summary</button>
-              <button class="quick">Key dates</button>
-              <button class="quick">Main topic</button>
+              <button class="quick active" data-quick="summary">Summary</button>
+              <button class="quick" data-quick="key_dates">Key dates</button>
+              <button class="quick" data-quick="main_topic">Main topic</button>
             </div>
             <div class="chat-feed">
               <div class="chat-bubble system">Ready. Ask about '${file}'.</div>
               ${messages || '<div class="chat-bubble assistant">I can answer from extracted snippets and file metadata in local mode.</div>'}
             </div>
             <div class="chat-composer">
-              <textarea class="chat-input" placeholder="Ask about this document..."></textarea>
+              <textarea class="chat-input" placeholder="Ask about this document...">${esc(rp.chat_input || "")}</textarea>
               <div class="chat-actions">
-                <button class="send-btn">Send</button>
-                <button class="reset-btn">O</button>
+                <button class="send-btn"${rp.chat_busy ? " disabled" : ""}>${rp.chat_busy ? "Sending..." : "Send"}</button>
+                <button class="reset-btn"${rp.chat_busy ? " disabled" : ""}>O</button>
               </div>
             </div>
           </div>
@@ -1011,6 +1078,10 @@ class LupaRight extends HTMLElement {
     const askDoc = this.querySelector("#ask-doc");
     const extMode = this.querySelector("#mode-ext");
     const localMode = this.querySelector("#mode-local");
+    const quickButtons = this.querySelectorAll(".quick[data-quick]");
+    const chatInput = this.querySelector(".chat-input");
+    const sendBtn = this.querySelector(".send-btn");
+    const resetBtn = this.querySelector(".reset-btn");
     const actionButtons = this.querySelectorAll(".action-btn[data-action]");
 
     if (previewTab) {
@@ -1052,6 +1123,38 @@ class LupaRight extends HTMLElement {
     if (localMode) {
       localMode.addEventListener("click", () => {
         shell.state.right_panel.chat_mode = "local_model";
+        shell.paint();
+      });
+    }
+    quickButtons.forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-quick");
+        let prompt = "Summarize this document.";
+        if (key === "key_dates") prompt = "List key dates mentioned in this document.";
+        if (key === "main_topic") prompt = "What is the main topic of this document?";
+        await shell.sendChatMessage(prompt);
+      });
+    });
+    if (chatInput) {
+      chatInput.addEventListener("input", (ev) => {
+        shell.state.right_panel.chat_input = ev.target.value || "";
+      });
+      chatInput.addEventListener("keydown", async (ev) => {
+        if (ev.key === "Enter" && !ev.shiftKey) {
+          ev.preventDefault();
+          await shell.sendChatMessage(shell.state.right_panel.chat_input || "");
+        }
+      });
+    }
+    if (sendBtn) {
+      sendBtn.addEventListener("click", async () => {
+        await shell.sendChatMessage(shell.state.right_panel.chat_input || "");
+      });
+    }
+    if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        shell.state.right_panel.chat_messages = [];
+        shell.state.right_panel.chat_input = "";
         shell.paint();
       });
     }
