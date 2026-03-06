@@ -305,6 +305,15 @@ class LupaShell extends HTMLElement {
   }
 
   paint() {
+    const prevLeftHost = this.querySelector("lupa-left");
+    const prevCenterHost = this.querySelector("lupa-center");
+    const prevRightHost = this.querySelector("lupa-right");
+    const scrollSnapshot = {
+      left: prevLeftHost ? prevLeftHost.scrollTop : this._scrollLeft || 0,
+      center: prevCenterHost ? prevCenterHost.scrollTop : this._scrollCenter || 0,
+      right: prevRightHost ? prevRightHost.scrollTop : this._scrollRight || 0,
+    };
+
     const s = this.state;
     const lat = s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`;
     const stateText = s.top.busy ? "Indexing" : "Idle";
@@ -358,6 +367,50 @@ class LupaShell extends HTMLElement {
     if (left && typeof left.bind === "function") left.bind(this);
     if (center && typeof center.bind === "function") center.bind(this);
     if (right && typeof right.bind === "function") right.bind(this);
+
+    if (left) {
+      left.scrollTop = scrollSnapshot.left;
+      this._scrollLeft = scrollSnapshot.left;
+      left.addEventListener(
+        "scroll",
+        () => {
+          this._scrollLeft = left.scrollTop;
+        },
+        { passive: true },
+      );
+    }
+    if (center) {
+      center.scrollTop = scrollSnapshot.center;
+      this._scrollCenter = scrollSnapshot.center;
+      center.addEventListener(
+        "scroll",
+        () => {
+          this._scrollCenter = center.scrollTop;
+        },
+        { passive: true },
+      );
+    }
+    if (right) {
+      right.scrollTop = scrollSnapshot.right;
+      this._scrollRight = scrollSnapshot.right;
+      right.addEventListener(
+        "scroll",
+        () => {
+          this._scrollRight = right.scrollTop;
+        },
+        { passive: true },
+      );
+    }
+    if (this._ensureSelectedVisibleAfterPaint) {
+      const activeRow = this.querySelector("lupa-center .row.active");
+      if (activeRow && typeof activeRow.scrollIntoView === "function") {
+        activeRow.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+      if (center) {
+        this._scrollCenter = center.scrollTop;
+      }
+      this._ensureSelectedVisibleAfterPaint = false;
+    }
 
     const input = this.querySelector(".search-input");
     const btn = this.querySelector("#btn-search");
@@ -430,7 +483,8 @@ class LupaShell extends HTMLElement {
     this.selectItem(nextIdx);
   }
 
-  selectItem(idx) {
+  selectItem(idx, options = {}) {
+    const keepViewport = options.keepViewport !== false;
     const items = this.state.results.items || [];
     if (!Number.isFinite(idx) || !items[idx]) return;
     items.forEach((it, i) => {
@@ -447,6 +501,9 @@ class LupaShell extends HTMLElement {
     this.state.right_panel.snippet = item.snippet || null;
     this.state.right_panel.match_count = item.snippet ? 1 : 0;
     this.state.right_panel.tab = "preview";
+    if (keepViewport) {
+      this._ensureSelectedVisibleAfterPaint = true;
+    }
     this.paint();
   }
 
@@ -455,7 +512,7 @@ class LupaShell extends HTMLElement {
     const items = this.state.results.items || [];
     const idx = items.findIndex((it) => itemMatchesCollection(it, key));
     if (idx >= 0) {
-      this.selectItem(idx);
+      this.selectItem(idx, { keepViewport: false });
       return;
     }
     items.forEach((it) => {
