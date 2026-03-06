@@ -219,6 +219,7 @@ kbd,
 
 .main-grid > * {
   min-height: 0;
+  height: 100%;
 }
 
 lupa-left,
@@ -226,11 +227,11 @@ lupa-center,
 lupa-right {
   display: block;
   min-height: 0;
-  overflow: hidden;
+  height: 100%;
 }
 
 lupa-left {
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 lupa-center {
@@ -249,13 +250,17 @@ lupa-right {
 
 .left {
   overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--line-soft);
   background: linear-gradient(180deg, #090c16 0%, #090b14 100%);
 }
 
 .left-scroll {
-  height: 100%;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 14px 10px 10px;
 }
 
@@ -439,7 +444,7 @@ lupa-right {
   font-weight: 600;
 }
 
-.tool-btn span {
+.tool-glyph {
   width: 16px;
   height: 16px;
   border-radius: 6px;
@@ -449,6 +454,19 @@ lupa-right {
   font-size: 10px;
   color: var(--text-42);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.icon-svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  opacity: 0.9;
+}
+
+.collection-icon .icon-svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.8;
 }
 
 .path-row {
@@ -461,11 +479,19 @@ lupa-right {
   min-width: 0;
   display: flex;
   align-items: center;
+  gap: 8px;
   color: var(--text-70);
   letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.path-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .path-next {
@@ -474,6 +500,12 @@ lupa-right {
   padding: 0;
   display: grid;
   place-items: center;
+}
+
+.path-next .icon-svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.9;
 }
 
 .toggle-row {
@@ -668,7 +700,7 @@ input.adv-chip::placeholder {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 32px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -729,6 +761,28 @@ input.adv-chip::placeholder {
 .empty-block {
   color: var(--text-58);
   font-size: 13px;
+  display: grid;
+  gap: 6px;
+}
+
+.row-empty {
+  min-height: 110px;
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+}
+
+.empty-block h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-78);
+  font-weight: 700;
+}
+
+.empty-block p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-42);
 }
 
 .load-more {
@@ -752,6 +806,8 @@ input.adv-chip::placeholder {
 
 .left-foot {
   height: 28px;
+  flex: none;
+  margin-top: auto;
   border-top: 1px solid var(--line-soft);
   color: var(--text-30);
   font-size: 11px;
@@ -1094,7 +1150,7 @@ input.adv-chip::placeholder {
   }
 
   .main-grid {
-    grid-template-columns: 220px 1fr 310px !important;
+    grid-template-columns: minmax(240px, 30vw) 1fr 310px !important;
   }
 
   .brand-text {
@@ -1119,7 +1175,7 @@ input.adv-chip::placeholder {
   }
 
   .main-grid {
-    grid-template-columns: 210px 1fr !important;
+    grid-template-columns: minmax(230px, 38vw) 1fr !important;
   }
 
   .right {

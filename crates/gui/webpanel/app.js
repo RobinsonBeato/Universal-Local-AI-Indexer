@@ -175,6 +175,14 @@ function fileSrc(path) {
   return encodeURI(`file:///${normalized}`);
 }
 
+function iconSrc(name) {
+  return `./assets/icons/icon-${name}.svg`;
+}
+
+function iconImg(name) {
+  return `<img class="icon-svg" src="${iconSrc(name)}" alt="" aria-hidden="true" />`;
+}
+
 function markSnippet(text, query) {
   if (!text) return "";
   const q = String(query || "").trim();
@@ -302,6 +310,7 @@ class LupaShell extends HTMLElement {
     const stateText = s.top.busy ? "Indexing" : "Idle";
     const cpu = s.top.busy ? "busy" : "5%";
     const rightCol = s.right_panel.visible === false ? "0px" : "340px";
+    const leftCol = "236px";
 
     this.innerHTML = `
       <div class="app-shell">
@@ -331,7 +340,7 @@ class LupaShell extends HTMLElement {
             <span>LAT <span class="metric">${lat}</span></span>
           </div>
         </header>
-        <section class="main-grid" style="grid-template-columns: 236px 1fr ${rightCol};">
+        <section class="main-grid" style="grid-template-columns: ${leftCol} 1fr ${rightCol};">
           <lupa-left></lupa-left>
           <lupa-center></lupa-center>
           ${s.right_panel.visible === false ? "<div></div>" : "<lupa-right></lupa-right>"}
@@ -629,19 +638,19 @@ class LupaLeft extends HTMLElement {
   bind(shell) {
     const s = shell.state;
     const iconMap = {
-      recents: "O",
-      documents: "D",
-      images: "I",
-      media: "M",
-      source: "C",
-      pdf: "P",
+      recents: "clock",
+      documents: "file",
+      images: "image",
+      media: "media",
+      source: "code",
+      pdf: "pdf",
     };
     const collections = (s.sidebar.collections || [])
       .map((c) => {
         const active = c.key === s.sidebar.selected_filter ? " active" : "";
-        const icon = iconMap[c.key] || "F";
+        const icon = iconMap[c.key] || "file";
         return `<button class="collection-btn${active}" data-key="${esc(c.key)}">
-          <span class="collection-left"><span class="collection-icon">${icon}</span><span>${esc(c.label)}</span></span>
+          <span class="collection-left"><span class="collection-icon">${iconImg(icon)}</span><span>${esc(c.label)}</span></span>
           <span class="count-pill">${c.count}</span>
         </button>`;
       })
@@ -651,17 +660,19 @@ class LupaLeft extends HTMLElement {
       <aside class="left">
         <div class="left-scroll">
           <p class="tiny-title">SYSTEM TOOLS</p>
-          <button class="tool-btn" id="btn-build"><span>B</span>Build Index</button>
-          <button class="tool-btn" id="btn-monitor"><span>M</span>${s.top.watch_running ? "Stop Monitor" : "Start Monitor"}</button>
-          <button class="tool-btn" id="btn-doctor"><span>D</span>System Doctor</button>
+          <button class="tool-btn" id="btn-build"><span class="tool-glyph">${iconImg("hammer")}</span>Build Index</button>
+          <button class="tool-btn" id="btn-monitor"><span class="tool-glyph">${iconImg("pulse")}</span>${s.top.watch_running ? "Stop Monitor" : "Start Monitor"}</button>
+          <button class="tool-btn" id="btn-doctor"><span class="tool-glyph">${iconImg("shield")}</span>System Doctor</button>
           <div class="rule"></div>
           <p class="tiny-title">COLLECTIONS</p>
           ${collections}
           <div class="rule"></div>
           <p class="tiny-title">INDEX PATH</p>
           <div class="path-row">
-            <div class="path-chip mono">${esc(s.app.root || "-")}</div>
-            <button class="path-next" id="btn-root">&gt;</button>
+            <div class="path-chip">
+              <span class="mono path-value">${esc(s.app.root || "-")}</span>
+            </div>
+            <button class="path-next" id="btn-root" title="Select folder">${iconImg("folder-open")}</button>
           </div>
           <div class="rule"></div>
           <p class="tiny-title">ADVANCED SEARCH</p>
@@ -780,7 +791,10 @@ class LupaCenter extends HTMLElement {
           <span class="chip chip-green">${ms}</span>
         </div>
         <section class="rows">
-          ${rows || '<article class="row"><div class="empty-block">No results yet. Run a search.</div></article>'}
+          ${
+            rows ||
+            '<article class="row row-empty"><div class="empty-block"><h3>No results yet</h3><p>Run a search from the top bar to see indexed files.</p></div></article>'
+          }
         </section>
         ${
           remaining > 0
