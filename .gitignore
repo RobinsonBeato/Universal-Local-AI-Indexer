@@ -24,6 +24,9 @@ venv/
 
 # Rust
 /target/
+/target_local/
+/target_*/
+/target-*/
 **/*.rs.bk
 # Cargo.lock se versiona para aplicaciones CLI
 
@@ -35,6 +38,7 @@ models/
 runtime/
 third_party/llama/
 scripts/ai/tmp/
+crates/gui/webpanel/state.json
 
 # Visual Studio Code
 .vscode/

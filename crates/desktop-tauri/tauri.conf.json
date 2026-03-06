@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../gui/webpanel",
+    "distDir": "../gui/webpanel",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "Lupa Desktop",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "all": false,
+        "open": true
+      },
+      "clipboard": {
+        "all": false,
+        "writeText": true
+      },
+      "protocol": {
+        "all": false,
+        "asset": true,
+        "assetScope": [
+          "**"
+        ]
+      },
+      "shell": {
+        "all": false,
+        "open": true
+      }
+    },
+    "windows": [
+      {
+        "title": "Lupa Desktop",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "bundle": {
+      "active": false,
+      "identifier": "com.lupa.desktop"
+    },
+    "security": {
+      "csp": null
+    }
+  }
+}
