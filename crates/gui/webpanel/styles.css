@@ -49,6 +49,83 @@ kbd,
     var(--bg-root);
 }
 
+/* Instant first paint while web component hydrates */
+.boot-splash {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  background: radial-gradient(1200px 600px at 25% -20%, rgba(124, 56, 255, 0.14), transparent 55%),
+    var(--bg-root);
+}
+
+.boot-top {
+  display: grid;
+  grid-template-columns: 200px minmax(320px, 1fr) 86px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, #0b0e18 0%, #090c15 100%);
+}
+
+.boot-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.boot-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #9961ff 0%, #6c31ff 100%);
+  box-shadow: 0 8px 18px rgba(108, 49, 255, 0.33);
+}
+
+.boot-title {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--text-100);
+}
+
+.boot-search {
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.boot-pill {
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(61, 231, 175, 0.34);
+  background: rgba(13, 112, 81, 0.26);
+}
+
+.boot-main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 236px 1fr 340px;
+}
+
+.boot-side,
+.boot-side-right {
+  border-right: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, #090c16 0%, #090b14 100%);
+}
+
+.boot-side-right {
+  border-right: 0;
+  border-left: 1px solid var(--line-soft);
+  background: var(--bg-panel);
+}
+
+.boot-center {
+  background: rgba(255, 255, 255, 0.01);
+}
+
 .topbar {
   
   display: grid;
