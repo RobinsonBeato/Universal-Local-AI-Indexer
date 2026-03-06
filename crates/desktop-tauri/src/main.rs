@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use lupa_core::{
     provider_from_config, DoctorReport, IndexStats, LupaConfig, LupaEngine, QaMode, QaRequest,
@@ -7,6 +9,7 @@ use lupa_core::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::ClipboardManager;
+use tauri::Manager;
 
 #[derive(Debug, Deserialize)]
 struct SearchRequest {
@@ -60,6 +63,11 @@ struct AskDocumentCitation {
     excerpt: String,
 }
 
+#[derive(Default)]
+struct ModelServerState {
+    child: Mutex<Option<Child>>,
+}
+
 fn engine_for(root: &str) -> Result<LupaEngine, String> {
     let root_path = if root.trim().is_empty() {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -68,6 +76,117 @@ fn engine_for(root: &str) -> Result<LupaEngine, String> {
     };
     let cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
     LupaEngine::new(root_path, cfg).map_err(|e| e.to_string())
+}
+
+fn expand_env_tokens(input: &str) -> String {
+    let mut out = input.to_string();
+    if out.contains("%LOCALAPPDATA%") {
+        if let Ok(v) = std::env::var("LOCALAPPDATA") {
+            out = out.replace("%LOCALAPPDATA%", &v);
+        }
+    }
+    out
+}
+
+fn normalize_qa_paths(cfg: &mut LupaConfig) {
+    if cfg.qa.model_path.trim().is_empty() {
+        cfg.qa.model_path = "%LOCALAPPDATA%\\Lupa\\models\\qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string();
+    }
+    if cfg.qa.llama_server_path.trim().is_empty()
+        || cfg.qa.llama_server_path.trim().eq_ignore_ascii_case("third_party/llama/llama-server.exe")
+    {
+        cfg.qa.llama_server_path = "%LOCALAPPDATA%\\Lupa\\runtime\\llama-server.exe".to_string();
+    }
+    if cfg.qa.endpoint.trim().is_empty() {
+        cfg.qa.endpoint = "http://127.0.0.1:8088".to_string();
+    }
+}
+
+fn server_alive(endpoint: &str) -> bool {
+    let health = format!("{}/health", endpoint.trim_end_matches('/'));
+    ureq::get(&health)
+        .timeout(Duration::from_millis(600))
+        .call()
+        .map(|r| r.status() == 200)
+        .unwrap_or(false)
+}
+
+fn endpoint_port(endpoint: &str) -> Option<u16> {
+    let e = endpoint.trim_end_matches('/');
+    let pos = e.rfind(':')?;
+    e[pos + 1..].parse::<u16>().ok()
+}
+
+fn ensure_model_server_running(
+    state: &tauri::State<ModelServerState>,
+    root: &str,
+) -> Result<(), String> {
+    let root_path = if root.trim().is_empty() {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else {
+        PathBuf::from(root)
+    };
+    let mut cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
+    normalize_qa_paths(&mut cfg);
+
+    if !cfg.qa.auto_start_server {
+        return Ok(());
+    }
+    if server_alive(&cfg.qa.endpoint) {
+        return Ok(());
+    }
+
+    let model_path = PathBuf::from(expand_env_tokens(&cfg.qa.model_path));
+    let server_path = PathBuf::from(expand_env_tokens(&cfg.qa.llama_server_path));
+    if !server_path.exists() {
+        return Err(format!(
+            "llama-server executable not found: {}",
+            server_path.display()
+        ));
+    }
+    if !model_path.exists() {
+        return Err(format!("model file not found: {}", model_path.display()));
+    }
+
+    let port = endpoint_port(&cfg.qa.endpoint).unwrap_or(8088).to_string();
+    let host = "127.0.0.1";
+
+    let mut guard = state.child.lock().map_err(|_| "model server lock poisoned".to_string())?;
+    if guard.is_some() {
+        return Ok(());
+    }
+
+    let mut cmd = Command::new(&server_path);
+    cmd.arg("-m")
+        .arg(&model_path)
+        .arg("-c")
+        .arg("2048")
+        .arg("--host")
+        .arg(host)
+        .arg("--port")
+        .arg(&port);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start llama-server: {e}"))?;
+    *guard = Some(child);
+    Ok(())
+}
+
+fn stop_model_server(state: &tauri::State<ModelServerState>) {
+    if let Ok(mut guard) = state.child.lock() {
+        if let Some(child) = guard.as_mut() {
+            let _ = child.kill();
+        }
+        *guard = None;
+    }
 }
 
 #[tauri::command]
@@ -241,15 +360,21 @@ fn open_at_match(req: OpenAtMatchRequest) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn pick_folder() -> Result<Option<String>, String> {
+fn pick_folder(model_state: tauri::State<ModelServerState>) -> Result<Option<String>, String> {
     let picked = tauri::api::dialog::blocking::FileDialogBuilder::new()
         .pick_folder()
         .map(|p| p.display().to_string());
+    if let Some(root) = picked.as_deref() {
+        let _ = ensure_model_server_running(&model_state, root);
+    }
     Ok(picked)
 }
 
 #[tauri::command]
-fn ask_document(req: AskDocumentRequest) -> Result<AskDocumentResponse, String> {
+fn ask_document(
+    req: AskDocumentRequest,
+    model_state: tauri::State<ModelServerState>,
+) -> Result<AskDocumentResponse, String> {
     let root_path = if req.root.trim().is_empty() {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else {
@@ -257,11 +382,15 @@ fn ask_document(req: AskDocumentRequest) -> Result<AskDocumentResponse, String> 
     };
 
     let mut cfg = LupaConfig::load(&root_path).map_err(|e| e.to_string())?;
+    normalize_qa_paths(&mut cfg);
     let mode = match req.mode.as_deref() {
         Some("local_model") => QaMode::LocalModel,
         _ => QaMode::Extractive,
     };
     cfg.qa.mode = mode;
+    if cfg.qa.mode == QaMode::LocalModel {
+        let _ = ensure_model_server_running(&model_state, &req.root);
+    }
 
     let provider = provider_from_config(root_path, cfg);
     let answer = provider
@@ -286,6 +415,16 @@ fn ask_document(req: AskDocumentRequest) -> Result<AskDocumentResponse, String> 
 
 fn main() {
     tauri::Builder::default()
+        .manage(ModelServerState::default())
+        .setup(|app| {
+            let state = app.state::<ModelServerState>();
+            let root = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .display()
+                .to_string();
+            let _ = ensure_model_server_running(&state, &root);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             search,
             build_index,
@@ -298,6 +437,12 @@ fn main() {
             pick_folder,
             ask_document
         ])
+        .on_window_event(|event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event.event() {
+                let state = event.window().state::<ModelServerState>();
+                stop_model_server(&state);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("failed to run lupa desktop");
 }

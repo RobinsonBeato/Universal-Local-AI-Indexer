@@ -9,6 +9,7 @@ build = "build.rs"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ureq.workspace = true
 lupa-core = { path = "../core" }
 tauri = { version = "1.8", features = ["shell-open", "dialog-open", "clipboard-write-text", "protocol-asset"] }
 
