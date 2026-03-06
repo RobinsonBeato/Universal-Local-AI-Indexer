@@ -266,7 +266,7 @@ class LupaShell extends HTMLElement {
     this.monitorTimer = null;
     this._hotkeysBound = false;
     this.mode = tauriInvoke() ? "tauri" : "bridge";
-    this.paint();
+    requestAnimationFrame(() => this.paint());
 
     if (this.mode === "bridge") {
       this.timer = setInterval(async () => {
