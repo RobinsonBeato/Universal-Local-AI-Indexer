@@ -239,7 +239,7 @@ lupa-center {
 }
 
 lupa-right {
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .left,
@@ -271,6 +271,7 @@ lupa-right {
 }
 
 .right {
+  height: 100%;
   overflow: hidden;
   border-left: 1px solid var(--line-soft);
   background: var(--bg-panel);
@@ -279,7 +280,9 @@ lupa-right {
 }
 
 .right-scroll {
-  overflow: visible;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -962,9 +965,15 @@ input.adv-chip::placeholder {
 }
 
 .chat-layout {
-  display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
   gap: 10px;
+}
+
+.right-scroll.chat-layout {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .chat-mode {
@@ -1046,10 +1055,11 @@ input.adv-chip::placeholder {
 
 .chat-feed {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-right: 2px;
 }
 
 .chat-bubble {
@@ -1078,9 +1088,11 @@ input.adv-chip::placeholder {
 }
 
 .chat-composer {
+  flex: none;
   border-top: 1px solid var(--line-soft);
   padding-top: 10px;
   margin-top: 2px;
+  background: var(--bg-panel);
 }
 
 .chat-input {

@@ -300,8 +300,8 @@ class LupaShell extends HTMLElement {
       this.paint();
       return;
     }
-    const report = await invoke("doctor", { req: { root: "" } });
-    this.state.app.root = report.project_root || "";
+    const boot = await invoke("bootstrap");
+    this.state.app.root = (boot && boot.project_root) || "";
     this.state.app.status = "Desktop mode ready";
     this.paint();
   }
@@ -1079,6 +1079,7 @@ class LupaRight extends HTMLElement {
     const extMode = this.querySelector("#mode-ext");
     const localMode = this.querySelector("#mode-local");
     const quickButtons = this.querySelectorAll(".quick[data-quick]");
+    const chatFeed = this.querySelector(".chat-feed");
     const chatInput = this.querySelector(".chat-input");
     const sendBtn = this.querySelector(".send-btn");
     const resetBtn = this.querySelector(".reset-btn");
@@ -1156,6 +1157,11 @@ class LupaRight extends HTMLElement {
         shell.state.right_panel.chat_messages = [];
         shell.state.right_panel.chat_input = "";
         shell.paint();
+      });
+    }
+    if (chatFeed) {
+      requestAnimationFrame(() => {
+        chatFeed.scrollTop = chatFeed.scrollHeight;
       });
     }
   }

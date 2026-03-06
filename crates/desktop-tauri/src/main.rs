@@ -63,6 +63,11 @@ struct AskDocumentCitation {
     excerpt: String,
 }
 
+#[derive(Debug, Serialize)]
+struct BootstrapResponse {
+    project_root: String,
+}
+
 #[derive(Default)]
 struct ModelServerState {
     child: Mutex<Option<Child>>,
@@ -187,6 +192,15 @@ fn stop_model_server(state: &tauri::State<ModelServerState>) {
         }
         *guard = None;
     }
+}
+
+#[tauri::command]
+fn bootstrap() -> Result<BootstrapResponse, String> {
+    let project_root = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .display()
+        .to_string();
+    Ok(BootstrapResponse { project_root })
 }
 
 #[tauri::command]
@@ -417,15 +431,19 @@ fn main() {
     tauri::Builder::default()
         .manage(ModelServerState::default())
         .setup(|app| {
-            let state = app.state::<ModelServerState>();
-            let root = std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .display()
-                .to_string();
-            let _ = ensure_model_server_running(&state, &root);
+            let app_handle = app.handle();
+            std::thread::spawn(move || {
+                let root = std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .display()
+                    .to_string();
+                let state = app_handle.state::<ModelServerState>();
+                let _ = ensure_model_server_running(&state, &root);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            bootstrap,
             search,
             build_index,
             doctor,
