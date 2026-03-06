@@ -2,18 +2,29 @@
 
 ## Overview
 
-`lupa` is organized in three crates:
+LUPA is organized in four crates:
 
-1. `crates/core` (`lupa-core`): indexing, storage, search, and QA providers.
-2. `crates/cli` (`lupa`): command-line workflows.
-3. `crates/gui` (`lupa-gui`): desktop interface using the same core.
+1. `crates/core` (`lupa-core`): indexing, metadata storage, search, snippets, QA providers.
+2. `crates/cli` (`lupa`): CLI workflows (`index`, `search`, `doctor`).
+3. `crates/gui` (`lupa-gui`): legacy egui desktop frontend.
+4. `crates/desktop-tauri` (`lupa-desktop-tauri`): current desktop app (Tauri + WebPanel).
 
-## Storage model
+The single source of search/index logic is `lupa-core`.
 
-### Tantivy index (disk)
+## Mandatory engine decisions
 
-- Path: `.lupa/index/`
-- Schema fields:
+- Full-text engine: Tantivy (disk index).
+- Metadata store: SQLite.
+- Parallel workload: Rayon.
+- Incremental strategy: `mtime + size` + optional `xxhash` for small files.
+- Offline-first and privacy-first by default.
+
+## Storage Model
+
+### Tantivy index
+
+- Location: `.lupa/index/`
+- Main fields:
   - `path` (`STRING | STORED`)
   - `name` (`TEXT | STORED`)
   - `content` (`TEXT`)
@@ -21,81 +32,102 @@
 
 ### SQLite metadata
 
-- Path: `.lupa/metadata.db`
-- Main table `files`:
+- Location: `.lupa/metadata.db`
+- Main table: `files`
   - `path` (PK)
   - `mtime`
   - `size`
   - `hash`
   - `indexed_at`
 
-## Indexing pipeline
+## Indexing Pipeline
 
-1. Crawl filesystem with `walkdir` and configured excludes.
-2. Compare file state (`mtime + size`) against SQLite metadata.
-3. Optionally hash small files (`xxhash`) to avoid false-positive updates.
-4. Extract content (text + optional structured extraction for `pdf/docx`).
-5. Update Tantivy docs and SQLite metadata.
+1. Walk filesystem with configured includes/excludes.
+2. Compare candidate file state against SQLite metadata.
+3. Mark changed/new/deleted files.
+4. Extract text content:
+   - plain text/source directly
+   - optional structured extraction for `pdf/docx` (size-limited)
+5. Commit updates to Tantivy and SQLite.
 6. Remove deleted entries from both stores.
 
 Modes:
 
-- `index build`: fast metadata pass (quick readiness).
-- `index backfill`: deeper content extraction pass.
+- `index build`: fast metadata pass for quick readiness.
+- `index backfill`: deep content pass to improve text/snippet coverage.
 - `index watch`: event-driven incremental updates with dirty-path batching.
 
-## Search path
+## Search Pipeline
 
-1. Parse user query with Tantivy parser (`name`, `path`, `content`).
-2. Retrieve top docs.
-3. Apply optional filters (`path_prefix`, `regex`, `limit`).
-4. Rerank with heuristics (name/path match + recency).
-5. Optionally compute snippets/highlights.
+1. Parse query with Tantivy parser on `name`, `path`, `content`.
+2. Retrieve top candidates.
+3. Apply filters (`limit`, `path_prefix`, `regex`).
+4. Re-rank by relevance + practical heuristics (filename/path recency effects).
+5. Build snippets/highlights when requested.
+6. Return stable result payload.
 
-## QA architecture (Doc Chat)
+## Desktop Architecture (Tauri + WebPanel)
 
-Core exposes a provider interface:
+### UI runtime
+
+- Frontend: `crates/gui/webpanel/` (`index.html`, `app.js`, `styles.css`, assets/icons).
+- Host: Tauri window from `crates/desktop-tauri`.
+- IPC: frontend calls Rust commands via `window.__TAURI__.invoke(...)`.
+
+### Tauri command boundary
+
+Rust commands exposed by `lupa-desktop-tauri` include:
+
+- `search`
+- `build_index`
+- `doctor`
+- `pick_folder`
+- file actions (`open_path`, `open_with`, `open_folder`, `copy_path`, `open_at_match`)
+
+This keeps visual changes independent from indexing/search internals.
+
+### UI behavior highlights
+
+- Collection filters and advanced filters on left panel.
+- Incremental "load more" for result rows.
+- Thumbnail/image preview on demand.
+- Right panel supports preview mode and document chat mode.
+- Keyboard support for result navigation and open action.
+
+## QA / Doc Chat Architecture
+
+Provider abstraction in core:
 
 - `QaProvider` trait
 - `ExtractiveProvider`
 - `LocalModelProvider`
 
-Selection is runtime-configurable with `config.toml`:
+Runtime config (`config.toml`):
 
-- `qa.mode = "extractive"`: no model, deterministic and lightweight.
-- `qa.mode = "local_model"`: local `llama-server` + GGUF model.
+- `qa.mode = "extractive"`: no model/runtime required.
+- `qa.mode = "local_model"`: local `llama-server` + GGUF.
 
-### Extractive provider
+### Extractive mode
 
-- Uses local file metadata and extracted snippets.
-- Handles count-style questions deterministically.
-- No external process.
+- Deterministic local answers.
+- Uses snippets + metadata only.
 
-### Local model provider
+### Local model mode
 
-- Uses local runtime endpoint (`qa.endpoint`, default `127.0.0.1:8088`).
-- Can auto-start `llama-server` (`qa.auto_start_server = true`).
-- Uses document-aware prompt context.
-- Applies anti-repetition settings and answer sanitization.
-- Keeps inference fully offline.
+- Fully local inference.
+- Optional auto-start of local model server.
+- Context is bound to selected document.
 
-## GUI integration notes
+## Concurrency and Performance
 
-- QA requests are async and non-blocking for UI responsiveness.
-- Chat panel is bound to selected document.
-- Switching selected file closes current doc chat context.
-- Chat mode toggle in UI (`Extractive` / `Local AI`) maps to `qa.mode`.
+- Rayon parallelizes crawl, extraction, and preprocessing tasks.
+- Tantivy writer access is serialized to keep index consistency.
+- Dirty-path batching avoids expensive full rebuilds.
+- UI keeps interactions smooth with incremental rendering strategies.
 
-## Concurrency and performance
+## Privacy Defaults
 
-- `rayon` for parallel preprocessing/extraction.
-- Single Tantivy writer for consistency and lock safety.
-- Incremental update batches minimize full rebuilds.
-- UI virtualization keeps large result sets responsive.
-
-## Privacy defaults
-
-Default excludes:
+Default excluded paths:
 
 - `node_modules`
 - `.git`
@@ -106,11 +138,11 @@ Default excludes:
 - `Windows`
 - `System32`
 
-## JSON output stability
+## Stable JSON Contract
 
-`search --json` contract:
+`search --json` returns:
 
 - `query`
 - `total_hits`
 - `took_ms`
-- `hits[]` with `path`, `score`, `snippet`
+- `hits[]` (`path`, `score`, optional `snippet`, metadata fields when available)

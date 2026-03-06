@@ -1,31 +1,46 @@
-# Web Panel (Desktop UI Bridge)
+# WebPanel Frontend
 
-This folder is the first step to move desktop UI styling to web technology while keeping Rust core logic.
+This folder contains the desktop UI frontend used by `lupa-desktop-tauri`.
 
-## What it does
+## Current role
 
-- `lupa-gui` exports live UI state to `state.json`.
-- `index.html` renders that state using Web Components.
-- This lets you iterate visual design 1:1 with web styling, without touching search/index performance code.
+- Main desktop UI layer (HTML/CSS/JS + Web Components).
+- Talks to Rust through Tauri IPC (`window.__TAURI__.invoke`).
+- Keeps search/index logic in Rust core while enabling fast UI iteration.
 
-## Run flow
+## Files
 
-1. Start GUI:
+- `index.html`: app shell entrypoint.
+- `app.js`: component rendering + event wiring + Tauri command calls.
+- `styles.css`: single-source styles for the full UI.
+- `assets/icons/`: SVG icon set for sidebar/actions.
+- `state.json`: optional bridge-mode sample state.
+
+## Run in Desktop Mode (recommended)
+
+From workspace root:
 
 ```powershell
-cargo run -p lupa-gui
+cargo run -p lupa-desktop-tauri
 ```
 
-2. Start the included local static server:
+This is the production path for the current UI.
+
+## Optional Bridge Mode (frontend-only visual iteration)
+
+You can still run the panel in a browser for visual work:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\crates\gui\webpanel\serve.ps1
 ```
 
-3. Open `http://127.0.0.1:4173/index.html`.
+Then open:
 
-The page refreshes from `state.json` every ~350ms.
+- `http://127.0.0.1:4173/index.html`
 
-## Next step
+In bridge mode, UI can read from `state.json` as mock state (no real desktop actions).
 
-Embed this web panel in a desktop shell (Tauri/Wry) and wire actions back to Rust via IPC commands.
+## Notes
+
+- Keep icons and static assets under `assets/` to avoid polluting JS.
+- Avoid moving business logic into frontend code; keep it in `lupa-core`.

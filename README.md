@@ -1,131 +1,126 @@
-# Universal Local AI Indexer (`lupa`)
+# LUPA - Universal Local AI Indexer
 
-Fast local indexing and search for Windows (portable architecture), offline-first and privacy-first.
+Ultra-fast local file indexer and search app for Windows, built in Rust.  
+Offline-first, privacy-first, no cloud services, no telemetry by default.
 
-`lupa` supports two document Q&A modes:
+## Why LUPA
 
-- `Extractive` (no model, fastest startup, no extra downloads)
-- `Local AI` (optional GGUF model, still fully offline)
+- Offline-first: all indexing and search run locally.
+- $0 cloud cost: no external APIs required.
+- Ultra-fast search: Tantivy full-text + SQLite metadata.
+- Incremental indexing: re-index changed files only.
+- Stable output: human-readable CLI and `--json` for automation.
+- Privacy defaults: sensitive system folders excluded out of the box.
 
-No cloud calls, no telemetry by default, no external services required.
+## Current Apps
 
-## Core principles
-
-- Offline-first
-- Zero cloud cost
-- Fast incremental indexing
-- Stable JSON output for automation
-- Privacy by default (sensible excludes)
+- `lupa` (CLI): automation-friendly indexing and search.
+- `lupa-desktop-tauri` (desktop): modern WebView UI powered by the same Rust core.
+- `lupa-gui` (legacy egui app): still available during transition/testing.
 
 ## What gets indexed
 
-- File name + full path for all file types.
-- Text content for configured text extensions.
-- Text extraction for `pdf` and `docx` (size-limited by config).
+- File path and name for all discovered files.
+- Text content for configured plain-text/source extensions.
+- Optional structured extraction for `pdf` and `docx` (size-limited by config).
 
 ## Quickstart
 
-### 1) Build and run
+### 1) Build
 
 ```bash
-cargo build --release -p lupa
-cargo run -p lupa-gui
+cargo build --workspace
 ```
 
-### 2) Initial index
+### 2) Run desktop app (recommended)
 
 ```bash
-cargo run -p lupa -- index build
+cargo run -p lupa-desktop-tauri
 ```
 
-JSON:
+### 3) Run CLI
 
 ```bash
-cargo run -p lupa -- index build --json
+cargo run -p lupa -- --root "G:\\" index build
+cargo run -p lupa -- --root "G:\\" index backfill
+cargo run -p lupa -- --root "G:\\" search "connection error" --limit 20 --highlight --stats
 ```
 
-### 3) Search
+JSON output example:
 
 ```bash
-cargo run -p lupa -- search "connection error" --limit 20 --highlight --stats
-```
-
-JSON:
-
-```bash
-cargo run -p lupa -- search "query" --json
+cargo run -p lupa -- --root "G:\\" search "query" --json
 ```
 
 ### 4) Keep index fresh
 
 ```bash
-cargo run -p lupa -- index watch --interval-secs 2
+cargo run -p lupa -- --root "G:\\" index watch --interval-secs 2
 ```
 
 ### 5) Validate environment
 
 ```bash
-cargo run -p lupa -- doctor
+cargo run -p lupa -- --root "G:\\" doctor
 ```
 
-## CLI commands
+## CLI Commands
 
-- `lupa index build`
-- `lupa index backfill`
-- `lupa index watch`
+- `lupa index build [--json]`
+- `lupa index backfill [--json]`
+- `lupa index watch [--interval-secs N] [--json]`
 - `lupa search "<query>" [--json] [--limit N] [--path-prefix ...] [--regex ...] [--highlight] [--stats]`
-- `lupa doctor`
+- `lupa doctor [--json]`
 
-## GUI features
+## Desktop Features (Tauri + WebPanel)
 
-`lupa-gui` includes:
+- Index root selector + controls (`Build Index`, `Start/Stop Monitor`, `System Doctor`).
+- Fast result list with smooth scrolling and incremental "load more".
+- Category collections (Recents, Documents, Images, Media, Source Code, PDF Files).
+- Advanced filters (regex, path prefix, max results, snippets toggle).
+- Rich preview panel:
+  - image thumbnail/preview when file is image
+  - metadata (name, path, type, created/modified, size)
+  - quick actions (`Open`, `Open at match`, `Open with`, `Folder`, `Copy path`)
+- Document Chat panel (`Extractive` / `Local AI` modes).
 
-- root selector and index controls (`Build`, `Monitor`, `Doctor`)
-- natural query parsing + suggestions
-- categories and advanced filters
-- virtualized result list for smooth scrolling
-- preview panel with metadata, snippets, image preview, and quick actions
-- `DOC CHAT` panel for selected document Q&A
+## Document Chat Modes
 
-## Doc Chat modes
-
-### Extractive mode
+### 1) Extractive (default)
 
 - No model download.
 - Fast and deterministic.
-- Answers from local snippets and file metadata.
+- Answers from extracted snippets + file metadata.
 
-### Local AI mode
+### 2) Local AI (optional)
 
 - Uses local `llama-server` + GGUF model.
-- No internet during inference.
-- Uses selected document context and returns concise answers.
-- Honors question language (`es` / `en`) in current implementation.
+- Fully offline inference.
+- Document-aware prompt context.
+- Language-aware responses (`es` / `en`).
 
-Switch mode directly inside `DOC CHAT`.
+## Local AI Setup (Windows, one-time)
 
-## Local AI setup (Windows, one-time)
-
-Use the smallest default profile (Qwen 0.5B Q4):
+Install lightweight local runtime + model:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ai\setup-local-ai.ps1
 ```
 
-Installed outside the repository:
+Artifacts are installed outside the repo:
 
-- `%LOCALAPPDATA%\Lupa\runtime\` (runtime binaries and required DLLs)
-- `%LOCALAPPDATA%\Lupa\models\qwen2.5-0.5b-instruct-q4_k_m.gguf`
+- `%LOCALAPPDATA%\Lupa\runtime\`
+- `%LOCALAPPDATA%\Lupa\models\`
 
-Optional manual launch:
+Optional manual server launch:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ai\run-local-ai-server.ps1
 ```
 
-## `config.toml`
+## Configuration (`config.toml`)
 
-`lupa` loads `config.toml` from the app root.
+LUPA reads `config.toml` from the selected root.
 
 ```toml
 excludes = ["node_modules", ".git", "target", ".lupa", "AppData", "Program Files", "Windows", "System32"]
@@ -147,36 +142,41 @@ timeout_ms = 12000
 
 Notes:
 
-- `threads = 0` uses available CPU cores.
-- `max_structured_file_size_bytes` affects `pdf/docx` extraction budget.
-- `qa.mode = "extractive"` keeps startup light and avoids model usage.
+- `threads = 0` uses all available CPU cores.
+- `max_structured_file_size_bytes` controls extraction budget for `pdf/docx`.
+- `qa.mode = "extractive"` avoids model startup and keeps the app lightweight.
 
-## Troubleshooting Local AI
+## Default Excludes (privacy + safety)
 
-- `qa.mode=local_model but qa.model_path is empty`
-  - Ensure `[qa]` exists in `config.toml`.
-- `local model server did not become ready`
-  - Check `%LOCALAPPDATA%\Lupa\runtime\` has full runtime, not only one `.exe`.
-  - Ensure VC++ runtime is installed (`Microsoft.VCRedist.2015+.x64`).
-  - Increase `qa.timeout_ms` to `20000` for slower machines.
-- Repetitive answers
-  - Keep `max_tokens` moderate (e.g. `120-256`).
-  - Use explicit questions tied to selected document.
+- `node_modules`
+- `.git`
+- `target`
+- `.lupa`
+- `AppData`
+- `Program Files`
+- `Windows`
+- `System32`
 
-## Privacy and repository safety
+## Benchmarks
 
-- Model/runtime files are installed in `%LOCALAPPDATA%`, not in this repo.
-- Do not commit local artifacts under `models/`, `runtime/`, or temporary AI folders.
+Run basic benchmark suite:
 
-## Additional docs
+```powershell
+./scripts/bench.ps1 -Root . -Release -Warmup -Runs 5 -OutJson ./.lupa/bench/latest.json
+```
 
-- Architecture: [docs/architecture.md](docs/architecture.md)
-- Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
+Target on warm index (SSD): typical search under `50ms` p95.
 
-## Quality gates
+## Quality Gates
 
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
+
+## Documentation
+
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
+- WebPanel notes: [crates/gui/webpanel/README.md](crates/gui/webpanel/README.md)

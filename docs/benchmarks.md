@@ -1,23 +1,28 @@
-# Basic benchmarks
+# Benchmarks
 
-This project prioritizes two metrics:
+## Goals
+
+LUPA tracks these baseline metrics:
 
 1. Index `N` files without failures.
-2. Run 10 queries and report `p95`.
+2. Execute 10 queries and report `p95` latency.
+3. Keep warm-index search typically under `50ms` p95 on SSD.
 
-For Doc Chat, track a third metric:
+For Doc Chat (optional), also track:
 
-3. First-answer latency (`extractive` and `local_model`) on a fixed document set.
+4. first-answer latency for `extractive` and `local_model`.
 
-## Suggested script (PowerShell)
+## Benchmark Script
+
+PowerShell helper:
 
 ```powershell
 ./scripts/bench.ps1 -Root . -Queries @(
-  "error", "TODO", "config", "database", "index", "search", "rust", "panic", "fn", "impl"
+  "error","TODO","config","database","index","search","rust","panic","fn","impl"
 )
 ```
 
-## Recommended stable run
+Recommended stable run:
 
 ```powershell
 ./scripts/bench.ps1 `
@@ -29,27 +34,36 @@ For Doc Chat, track a third metric:
   -OutJson ./.lupa/bench/latest.json
 ```
 
-## Regression gate example (CI/local)
+## Regression Gate
 
 ```powershell
 ./scripts/bench.ps1 -Root . -Release -Warmup -Runs 3 -MaxP95Ms 50
 ```
 
-If `overall.p95_ms` is above `-MaxP95Ms`, the script exits with code `2`.
+If `overall.p95_ms` exceeds `-MaxP95Ms`, script exits with code `2`.
 
-## What it measures
+## What Is Measured
 
-- Total `index build` time.
+- `index build` duration.
 - Per-query latency for `search --json`.
-- Per-run stats: `min`, `max`, `avg`, `stddev`, `p50`, `p95`, `p99`.
-- Overall stats across all runs.
+- Stats per run: `min`, `max`, `avg`, `stddev`, `p50`, `p95`, `p99`.
+- Aggregate stats across runs.
 
-## Suggested QA latency checks
+## Desktop UX Perf Checks (manual)
 
-Use a stable document and fixed prompts in both modes:
+When validating `lupa-desktop-tauri`, also check:
 
-- `extractive`: target sub-second on warm cache.
-- `local_model` (0.5B): expect higher latency; track median and p95.
+- Result list scroll smoothness under large hit sets.
+- Selection latency (click/keyboard) without scroll jump.
+- Right panel preview load behavior (image preview on demand).
+- Search-to-render perceived delay with snippets enabled.
+
+## QA Latency Checks (Doc Chat)
+
+Use a fixed document and prompts in both modes:
+
+- `extractive`: target sub-second warm response.
+- `local_model` (small GGUF): expect higher latency; track p50/p95.
 
 Example prompts:
 
@@ -57,31 +71,26 @@ Example prompts:
 - `How many times does the word "casa" appear?`
 - `When was this file modified?`
 
-Record:
+Track:
 
 - startup-to-first-answer time
 - warm-answer time
-- answer length consistency
+- answer consistency
 - repetition rate
 
 ## Notes
 
-- Use a warm index (`-Warmup`) to approximate the typical `< 50ms` target.
-- For large repositories (100k files), tune `include_extensions` and `max_file_size_bytes` for consistency.
-- Use `-Release` for realistic user-facing latency numbers.
-- For `local_model`, keep `max_tokens` moderate (120-256) to reduce repetition and latency spikes.
+- Always benchmark with a warm index for realistic daily usage.
+- Use `-Release` for production-grade numbers.
+- For large datasets (100k+ files), tune:
+  - `include_extensions`
+  - `max_file_size_bytes`
+  - `max_structured_file_size_bytes`
+- For local model mode, keep `max_tokens` moderate (`120-256`) to reduce latency spikes.
 
-## Local reference run (2026-03-05)
+## Local Reference Run (2026-03-05)
 
-Environment: Windows, benchmark on this repository (`-Root .`).
-
-Command:
-
-```powershell
-./scripts/bench.ps1 -Root . -Queries @(
-  "error","TODO","config","database","index","search","rust","panic","fn","impl"
-)
-```
+Environment: Windows, repository root as benchmark dataset.
 
 Results:
 
