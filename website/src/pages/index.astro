@@ -1,0 +1,132 @@
+﻿---
+import "../styles/global.css";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LUPA | Instant Local Search</title>
+    <meta
+      name="description"
+      content="Offline-first local search app built in Rust. Fast indexing and retrieval with Tantivy + SQLite + Rayon."
+    />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" defer></script>
+  </head>
+  <body>
+    <main class="landing">
+      <video
+        class="bg-video"
+        data-bg-video
+        autoplay
+        muted
+        loop
+        playsinline
+        preload="auto"
+        aria-hidden="true"
+      >
+        <source src="/video/test1.loop.mp4" type="video/mp4" />
+
+      </video>
+      <div class="video-loop-fade" aria-hidden="true"></div>
+      <div class="video-overlay" aria-hidden="true"></div>
+      <div class="video-top-mask" aria-hidden="true"></div>
+      <div class="video-top-corner-cover" aria-hidden="true"></div>
+      <div class="video-logo-mask" aria-hidden="true"></div>
+      <div class="video-watermark-cover" aria-hidden="true"></div>
+
+      <header class="top-controls">
+        <a
+          class="doc-btn"
+          href="https://github.com/RobinsonBeato/Universal-Local-AI-Indexer#readme"
+          aria-label="Open documentation"
+          title="Documentation"
+        >
+          Documentation
+        </a>
+       
+      </header>
+
+      <section class="hero" aria-label="LUPA hero">
+        <h1 class="hero-title reveal">
+          <span class="grad-a">Clarity.</span>
+          <span class="solid">Focus.</span>
+          <span class="grad-b">Impact.</span>
+        </h1>
+        <p class="hero-sub reveal-delay">
+          We turn complex file systems into effortless local search experiences.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      const runHero = (gsap) => {
+        gsap.fromTo(
+          ".reveal",
+          { opacity: 0, y: 24 },
+          { opacity: 1, y: 0, duration: 1.15, ease: "power3.out" }
+        );
+        gsap.fromTo(
+          ".reveal-delay",
+          { opacity: 0, y: 14 },
+          { opacity: 1, y: 0, duration: 1.05, delay: 0.2, ease: "power3.out" }
+        );
+
+        /** @type {HTMLVideoElement|null} */
+        const bgVideo = document.querySelector("[data-bg-video]");
+        /** @type {HTMLElement|null} */
+        const overlay = document.querySelector(".video-loop-fade");
+        if (bgVideo && overlay) {
+          const fadeOutSeconds = 0.65;
+          const holdBlackSeconds = 2.0;
+          const fadeInSeconds = 0.85;
+
+          const runBlackCycle = () => {
+            gsap.to(overlay, {
+              opacity: 0.92,
+              duration: fadeOutSeconds,
+              ease: "power2.inOut",
+              onComplete: () => {
+                gsap.delayedCall(holdBlackSeconds, () => {
+                  gsap.to(overlay, {
+                    opacity: 0,
+                    duration: fadeInSeconds,
+                    ease: "power2.inOut"
+                  });
+                });
+              }
+            });
+          };
+
+          const scheduleByDuration = () => {
+            const d = bgVideo.duration;
+            if (!Number.isFinite(d) || d <= 0) return;
+            // Start fade shortly before each natural loop boundary.
+            const delay = Math.max(0.1, d - fadeOutSeconds - 0.04);
+            const tick = () => {
+              runBlackCycle();
+              gsap.delayedCall(d, tick);
+            };
+            gsap.delayedCall(delay, tick);
+          };
+
+          if (Number.isFinite(bgVideo.duration) && bgVideo.duration > 0) {
+            scheduleByDuration();
+          } else {
+            bgVideo.addEventListener("loadedmetadata", scheduleByDuration, { once: true });
+          }
+        }
+      };
+
+      const boot = () => {
+        const gsap = /** @type {any} */ (window).gsap;
+        if (gsap) runHero(gsap);
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", boot, { once: true });
+      } else {
+        boot();
+      }
+    </script>
+  </body>
+</html>
