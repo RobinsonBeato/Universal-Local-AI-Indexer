@@ -1,9 +1,15 @@
 # LUPA - Universal Local AI Indexer
 
-Ultra-fast local file indexer and search app for Windows, built in Rust.  
-Offline-first, privacy-first, no cloud services, no telemetry by default.
+[![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org/)
+[![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)](https://www.microsoft.com/windows)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/RobinsonBeato/Universal-Local-AI-Indexer)](https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0)
 
-LUPA is ultra-efficient by design: fast local search, minimal resource usage, and a lightweight footprint (~16 MB installed app). Built in Rust for top-tier performance, privacy, and reliability. Under the hood, it is engineered for low-latency local retrieval with bounded resource usage: Tantivy handles full-text retrieval, SQLite stores metadata, and Rayon parallelizes scan/extract stages. On a warm index, performance is tracked with percentile latency metrics (p50/p95/p99), not averages alone.
+Ultra-fast local indexing and search for Windows, built in Rust.  
+Offline-first, privacy-first, no cloud dependency, no telemetry by default.
+
+LUPA is ultra-efficient by design: fast local search, minimal resource usage, and a lightweight footprint (~16 MB installed app). Built in Rust for top-tier performance, privacy, and reliability.  
+Under the hood, it is engineered for low-latency local retrieval with bounded resource usage: Tantivy handles full-text retrieval, SQLite stores metadata, and Rayon parallelizes scan/extract stages. On a warm index, performance is tracked with percentile latency metrics (`p50/p95/p99`), not averages alone.
 
 ## Download
 
@@ -32,25 +38,36 @@ LUPA is ultra-efficient by design: fast local search, minimal resource usage, an
 - `.exe`: `793d4b75e2b1e8b98c382265bd86fbd182b3d110a7e377fda1ce743a6d949376`
 - `.msi`: `b86448194b8dd48e08618f5e7eef18f0b7e806375cd2669ede454e15587af989`
 
-## Why LUPA
+## Features
 
 - Offline-first: all indexing and search run locally.
-- $0 cloud cost: no external APIs required.
-- Ultra-fast search: Tantivy full-text + SQLite metadata.
+- Full-text retrieval with Tantivy + metadata in SQLite.
+- Incremental indexing: re-index only changed files.
+- Parallel indexing pipeline powered by Rayon.
+- Stable CLI output (`--json`) for automation.
+- Desktop app with preview/actions + optional local AI doc chat.
 - Low memory footprint and efficient CPU usage.
 - Lightweight installed app footprint (~16 MB executable).
-- Incremental indexing: re-index changed files only.
-- Stable output: human-readable CLI and `--json` for automation.
 - Privacy defaults: sensitive system folders excluded out of the box.
 
 ## Performance Model
 
 - Retrieval path: Tantivy query execution over persisted inverted index, with metadata enrichment from SQLite.
-- Incremental cost model: update work scales with `ΔN` (changed files), not full corpus `N`.
+- Incremental cost model: update work scales with `delta N` (changed files), not full corpus `N`.
 - Parallel indexing pipeline: filesystem traversal + extraction executed with Rayon worker pools.
 - Latency objective: warm-index search typically `< 50ms p95` on SSD.
 - Local reference run (`docs/benchmarks.md`, 2026-03-05): `overall.p95_ms = 25` across 10 queries.
 - User-facing install size: app executable footprint around `~16 MB`.
+
+## Architecture (Summary)
+
+```text
+Filesystem Crawl -> Extractors -> SQLite metadata + Tantivy index -> Query engine -> UI/CLI output
+```
+
+- Crawl/extract stages are parallelized with Rayon.
+- SQLite tracks file metadata (`path`, `mtime`, `size`, optional hash).
+- Tantivy handles low-latency full-text retrieval on a persisted on-disk index.
 
 ## Current Apps
 
@@ -62,11 +79,31 @@ LUPA is ultra-efficient by design: fast local search, minimal resource usage, an
 
 ![LUPA Desktop](docs/images/image-sample.png)
 
+## Example Query
+
+User query:
+
+```text
+casa
+```
+
+Typical output behavior:
+
+- Ranked file hits with extension/type badges.
+- Text snippets with term highlighting.
+- Right panel metadata (`created`, `modified`, `size`) and quick actions.
+
 ## What gets indexed
 
 - File path and name for all discovered files.
 - Text content for configured plain-text/source extensions.
 - Optional structured extraction for `pdf` and `docx` (size-limited by config).
+
+## Supported File Types
+
+- Text/source: `txt`, `md`, `log`, `rs`, `toml`, `json`, `js`, `ts`, `py`, `sql`, and similar code/text files.
+- Structured extraction (optional): `pdf`, `docx`.
+- UI collections include documents, images, media, source code, and PDF.
 
 ## Quickstart
 
