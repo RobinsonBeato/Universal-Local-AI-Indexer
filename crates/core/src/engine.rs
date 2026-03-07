@@ -984,15 +984,36 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn highlight_snippet(content: &str, query: &str) -> String {
-    let q = query.to_lowercase();
-    let lower = content.to_lowercase();
+    // Use ASCII-folding to keep byte offsets aligned with the original UTF-8 string.
+    let q = query.to_ascii_lowercase();
+    let lower = content.to_ascii_lowercase();
     if let Some(idx) = lower.find(&q) {
-        let start = idx.saturating_sub(40);
-        let end = (idx + q.len() + 80).min(content.len());
+        let start = floor_char_boundary(content, idx.saturating_sub(40));
+        let end = ceil_char_boundary(content, (idx + q.len() + 80).min(content.len()));
         return content[start..end].replace('\n', " ");
     }
 
     content.chars().take(120).collect()
+}
+
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
 }
 
 fn build_query_signals(query: &str) -> QuerySignals {
