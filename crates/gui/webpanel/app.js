@@ -232,6 +232,12 @@ function mapSearchResult(query, res) {
   };
 }
 
+function effectiveLimit(state) {
+  const raw = Number(state?.sidebar?.limit ?? 20);
+  if (!Number.isFinite(raw) || raw <= 0) return 20;
+  return Math.min(Math.max(Math.trunc(raw), 1), 200);
+}
+
 function tauriInvoke() {
   const api = window.__TAURI__;
   if (!api) return null;
@@ -265,6 +271,9 @@ class LupaShell extends HTMLElement {
     this.state = JSON.parse(JSON.stringify(EMPTY));
     this.monitorTimer = null;
     this._hotkeysBound = false;
+    this._searchInFlight = false;
+    this._pendingSearch = false;
+    this._refreshTimer = null;
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
@@ -571,12 +580,18 @@ class LupaShell extends HTMLElement {
       this.paint();
       return;
     }
+    if (this._searchInFlight) {
+      this._pendingSearch = true;
+      return;
+    }
 
+    this._searchInFlight = true;
     this.state.top.busy = true;
     this.state.app.status = "Searching...";
     this.paint();
 
     if (this.mode !== "tauri") {
+      this._searchInFlight = false;
       this.state.top.busy = false;
       this.state.app.status = "Bridge mode: search runs only in desktop-tauri";
       this.paint();
@@ -600,7 +615,7 @@ class LupaShell extends HTMLElement {
       this.state.results.total_hits = mapped.total_hits;
       this.state.results.took_ms = mapped.took_ms;
       this.state.results.items = mapped.items;
-      this.state.results.visible_count = 40;
+      this.state.results.visible_count = Math.min(mapped.items.length, effectiveLimit(this.state));
       this.state.top.latency_ms = mapped.took_ms;
       this.state.top.hits = mapped.total_hits;
       this.state.top.query = query;
@@ -612,12 +627,28 @@ class LupaShell extends HTMLElement {
       this.selectFirstFromActiveCollection();
     } catch (err) {
       this.state.app.status = `Search error: ${err}`;
+      this._searchInFlight = false;
       this.state.top.busy = false;
       this.paint();
       return;
     }
+    this._searchInFlight = false;
     this.state.top.busy = false;
     this.paint();
+    if (this._pendingSearch) {
+      this._pendingSearch = false;
+      this.runSearch();
+    }
+  }
+
+  scheduleSearchRefresh(delayMs = 220) {
+    if (this.mode !== "tauri") return;
+    if (!(this.state.top.query || "").trim()) return;
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = null;
+      this.runSearch();
+    }, delayMs);
   }
 
   async pickRootFolder() {
@@ -812,7 +843,10 @@ class LupaLeft extends HTMLElement {
     this.querySelectorAll(".collection-btn").forEach((el) => {
       el.addEventListener("click", () => {
         shell.state.sidebar.selected_filter = el.getAttribute("data-key") || "recents";
-        shell.state.results.visible_count = 40;
+        shell.state.results.visible_count = Math.min(
+          (shell.state.results.items || []).length,
+          effectiveLimit(shell.state),
+        );
         shell.state.sidebar.collections = withCollectionCounts(
           shell.state.results.items || [],
           shell.state.sidebar.selected_filter,
@@ -846,6 +880,25 @@ class LupaLeft extends HTMLElement {
         const n = Number(ev.target.value);
         shell.state.sidebar.limit = Number.isFinite(n) && n > 0 ? Math.min(n, 200) : 20;
       });
+      limitInput.addEventListener("change", () => {
+        shell.state.results.visible_count = Math.min(
+          (shell.state.results.items || []).length,
+          effectiveLimit(shell.state),
+        );
+        shell.paint();
+        shell.scheduleSearchRefresh(80);
+      });
+      limitInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          shell.state.results.visible_count = Math.min(
+            (shell.state.results.items || []).length,
+            effectiveLimit(shell.state),
+          );
+          shell.paint();
+          shell.scheduleSearchRefresh(0);
+        }
+      });
     }
     if (snippetsToggle) {
       snippetsToggle.addEventListener("click", () => {
@@ -872,17 +925,20 @@ class LupaCenter extends HTMLElement {
         filtered.push({ ...it, __idx: idx });
       }
     });
-    const visibleCount = Math.max(20, Math.min(filtered.length, Number(s.results.visible_count || 40)));
+    const visibleCount = Math.max(
+      1,
+      Math.min(filtered.length, Number(s.results.visible_count || effectiveLimit(s))),
+    );
     const items = filtered.slice(0, visibleCount);
     const remaining = Math.max(0, filtered.length - items.length);
     const rows = items
-      .map((r) => {
+      .map((r, rowPos) => {
         const active = r.selected ? " active" : "";
         const badge = esc((r.ext || "file").toUpperCase());
         const snip = r.snippet
           ? `<div class="row-snippet">${markSnippet(r.snippet, s.top.query)}</div>`
           : "";
-        const thumb = isImageExt(r.ext)
+        const thumb = isImageExt(r.ext) && rowPos < 80
           ? `<img class="row-thumb" src="${esc(fileSrc(r.path))}" alt="${esc(r.name)}" loading="lazy" decoding="async" />`
           : `<div class="file-icon ${extClass(r.ext)}">${extLabel(r.ext)}</div>`;
         return `<article class="row${active}" data-row="${r.__idx}">
@@ -942,8 +998,12 @@ class LupaCenter extends HTMLElement {
     const loadMore = this.querySelector("#load-more-btn");
     if (loadMore) {
       loadMore.addEventListener("click", () => {
-        const current = Number(shell.state.results.visible_count || 40);
-        shell.state.results.visible_count = current + 20;
+        const current = Number(shell.state.results.visible_count || effectiveLimit(shell.state));
+        const step = Math.max(10, effectiveLimit(shell.state));
+        shell.state.results.visible_count = Math.min(
+          (shell.state.results.items || []).length,
+          current + step,
+        );
         shell.paint();
       });
     }
