@@ -3,10 +3,11 @@
 Ultra-fast local file indexer and search app for Windows, built in Rust.  
 Offline-first, privacy-first, no cloud services, no telemetry by default.
 
+LUPA is ultra-efficient by design: fast local search, minimal resource usage, and a lightweight footprint (~16 MB installed app). Built in Rust for top-tier performance, privacy, and reliability. Under the hood, it is engineered for low-latency local retrieval with bounded resource usage: Tantivy handles full-text retrieval, SQLite stores metadata, and Rayon parallelizes scan/extract stages. On a warm index, performance is tracked with percentile latency metrics (p50/p95/p99), not averages alone.
+
 ## Download
 
-- Latest Windows installers (`.exe` and `.msi`):
-  `https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0`
+- [Download Windows installers (.exe and .msi) - v0.1.0](https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0)
 
 ### Checksums (SHA-256)
 
@@ -18,9 +19,20 @@ Offline-first, privacy-first, no cloud services, no telemetry by default.
 - Offline-first: all indexing and search run locally.
 - $0 cloud cost: no external APIs required.
 - Ultra-fast search: Tantivy full-text + SQLite metadata.
+- Low memory footprint and efficient CPU usage.
+- Lightweight installed app footprint (~16 MB executable).
 - Incremental indexing: re-index changed files only.
 - Stable output: human-readable CLI and `--json` for automation.
 - Privacy defaults: sensitive system folders excluded out of the box.
+
+## Performance Model
+
+- Retrieval path: Tantivy query execution over persisted inverted index, with metadata enrichment from SQLite.
+- Incremental cost model: update work scales with `ΔN` (changed files), not full corpus `N`.
+- Parallel indexing pipeline: filesystem traversal + extraction executed with Rayon worker pools.
+- Latency objective: warm-index search typically `< 50ms p95` on SSD.
+- Local reference run (`docs/benchmarks.md`, 2026-03-05): `overall.p95_ms = 25` across 10 queries.
+- User-facing install size: app executable footprint around `~16 MB`.
 
 ## Current Apps
 
@@ -63,7 +75,8 @@ Requirements:
 Build release installers:
 
 ```powershell
-cargo tauri build -p lupa-desktop-tauri
+cd crates/desktop-tauri
+cargo tauri build
 ```
 
 Artifacts are generated in:
