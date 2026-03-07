@@ -1,7 +1,10 @@
+import { LANG_STORAGE_KEY, collectionLabel, resolveLang, t as translate } from "./components/i18n.index.js";
+
 const EMPTY = {
   generated_at: "",
   app: { status: "Ready", root: "" },
   top: { query: "", busy: false, watch_running: false, hits: 0, latency_ms: null, cpu_pct: null },
+  settings: { language: "es", open: false },
   sidebar: {
     selected_filter: "recents",
     collections: [
@@ -95,7 +98,7 @@ function classifyCollection(ext) {
   return "documents";
 }
 
-function withCollectionCounts(items, selectedFilter) {
+function withCollectionCounts(items, selectedFilter, lang = "es") {
   const counts = {
     recents: items.length,
     documents: 0,
@@ -109,12 +112,12 @@ function withCollectionCounts(items, selectedFilter) {
     counts[k] = (counts[k] || 0) + 1;
   }
   return [
-    { key: "recents", label: "Recents", count: counts.recents },
-    { key: "documents", label: "Documents", count: counts.documents },
-    { key: "images", label: "Images", count: counts.images },
-    { key: "media", label: "Media", count: counts.media },
-    { key: "source", label: "Source Code", count: counts.source },
-    { key: "pdf", label: "PDF Files", count: counts.pdf },
+    { key: "recents", label: collectionLabel(lang, "recents"), count: counts.recents },
+    { key: "documents", label: collectionLabel(lang, "documents"), count: counts.documents },
+    { key: "images", label: collectionLabel(lang, "images"), count: counts.images },
+    { key: "media", label: collectionLabel(lang, "media"), count: counts.media },
+    { key: "source", label: collectionLabel(lang, "source"), count: counts.source },
+    { key: "pdf", label: collectionLabel(lang, "pdf"), count: counts.pdf },
   ].map((c) => ({ ...c, active: c.key === selectedFilter }));
 }
 
@@ -268,6 +271,45 @@ async function invokeDesktop(cmd, payload) {
 }
 
 class LupaShell extends HTMLElement {
+  lang() {
+    return resolveLang(this.state?.settings?.language);
+  }
+
+  t(key, vars = {}) {
+    return translate(this.lang(), key, vars);
+  }
+
+  loadLanguagePreference() {
+    try {
+      const saved = localStorage.getItem(LANG_STORAGE_KEY);
+      this.state.settings.language = resolveLang(saved || this.state.settings.language);
+    } catch {
+      this.state.settings.language = resolveLang(this.state.settings.language);
+    }
+    this.state.sidebar.collections = withCollectionCounts(
+      this.state.results.items || [],
+      this.state.sidebar.selected_filter || "recents",
+      this.lang(),
+    );
+  }
+
+  setLanguage(lang) {
+    const next = resolveLang(lang);
+    this.state.settings.language = next;
+    this.state.settings.open = false;
+    this.state.sidebar.collections = withCollectionCounts(
+      this.state.results.items || [],
+      this.state.sidebar.selected_filter || "recents",
+      next,
+    );
+    try {
+      localStorage.setItem(LANG_STORAGE_KEY, next);
+    } catch {
+      // ignore storage errors
+    }
+    this.paint();
+  }
+
   connectedCallback() {
     this.state = JSON.parse(JSON.stringify(EMPTY));
     this.monitorTimer = null;
@@ -278,14 +320,17 @@ class LupaShell extends HTMLElement {
     this._snippetTimer = null;
     this._snippetBusy = false;
     this._cpuTimer = null;
+    this.loadLanguagePreference();
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
     if (this.mode === "bridge") {
       this.timer = setInterval(async () => {
         const next = await loadBridgeState();
+        next.settings = { ...(this.state.settings || {}), ...(next.settings || {}) };
         if (JSON.stringify(next) !== JSON.stringify(this.state)) {
           this.state = next;
+          this.state.settings.language = resolveLang(this.state.settings.language);
           this.paint();
         }
       }, 300);
@@ -319,7 +364,7 @@ class LupaShell extends HTMLElement {
     }
     const boot = await invoke("bootstrap");
     this.state.app.root = (boot && boot.project_root) || "";
-    this.state.app.status = "Desktop mode ready";
+    this.state.app.status = this.t("app_ready");
     this.paint();
     this.startCpuTelemetry();
   }
@@ -358,10 +403,12 @@ class LupaShell extends HTMLElement {
 
     const s = this.state;
     const lat = s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`;
-    const stateText = s.top.busy ? "Indexing" : "Idle";
+    const stateText = s.top.busy ? this.t("status_indexing") : this.t("status_idle");
     const cpu = Number.isFinite(s.top.cpu_pct) ? `${Math.round(s.top.cpu_pct)}%` : "N/A";
     const rightCol = s.right_panel.visible === false ? "0px" : "340px";
     const leftCol = "236px";
+    const settingsOpen = s.settings?.open === true;
+    const lang = this.lang();
 
     this.innerHTML = `
       <div class="app-shell">
@@ -373,21 +420,33 @@ class LupaShell extends HTMLElement {
           <div class="v-divider"></div>
           <div class="search-wrap">
             <span class="search-glyph">${iconImg("search")}</span>
-            <input class="search-input" value="${esc(s.top.query || "")}" placeholder="Search files, docs, content..." />
+            <input class="search-input" value="${esc(s.top.query || "")}" placeholder="${esc(this.t("search_placeholder"))}" />
             <div class="kbd-group">
               <span class="kbd-chip">Ctrl</span>
               <span class="kbd-chip">K</span>
             </div>
           </div>
-          <button class="search-btn" id="btn-search">Search</button>
+          <button class="search-btn" id="btn-search">${esc(this.t("search_button"))}</button>
           <div class="state-pill"><span class="state-dot"></span>${stateText}</div>
-          <div class="metrics">
-            
-            
-           
-             <span>CPU <span class="w">${cpu}</span></span>
-           
-            <span>LAT <span class="metric">${lat}</span></span>
+          <div class="topbar-right">
+            <div class="settings-wrap">
+              <button class="settings-btn" id="btn-settings" title="${esc(this.t("settings_label"))}" aria-label="${esc(this.t("settings_label"))}">
+                ${iconImg("settings")}
+              </button>
+              ${
+                settingsOpen
+                  ? `<div class="settings-menu">
+                      <div class="settings-title">${esc(this.t("settings_language"))}</div>
+                      <button class="lang-item ${lang === "es" ? "active" : ""}" data-lang="es">${esc(this.t("language_es"))}</button>
+                      <button class="lang-item ${lang === "en" ? "active" : ""}" data-lang="en">${esc(this.t("language_en"))}</button>
+                    </div>`
+                  : ""
+              }
+            </div>
+            <div class="metrics">
+              <span>${esc(this.t("metrics_cpu"))} <span class="w">${cpu}</span></span>
+              <span>${esc(this.t("metrics_lat"))} <span class="metric">${lat}</span></span>
+            </div>
           </div>
         </header>
         <section class="main-grid" style="grid-template-columns: ${leftCol} 1fr ${rightCol};">
@@ -396,8 +455,8 @@ class LupaShell extends HTMLElement {
           ${s.right_panel.visible === false ? "<div></div>" : "<lupa-right></lupa-right>"}
         </section>
         <footer class="statusbar">
-          <span>${esc(s.app.status || "Ready")}</span>
-          <span>${s.results.total_hits} resultados en ${lat} | ${esc(s.app.root || "-")}</span>
+          <span>${esc(s.app.status || this.t("app_ready"))}</span>
+          <span>${esc(this.t("statusbar_results", { hits: s.results.total_hits, lat, root: s.app.root || "-" }))}</span>
         </footer>
       </div>
     `;
@@ -455,6 +514,7 @@ class LupaShell extends HTMLElement {
 
     const input = this.querySelector(".search-input");
     const btn = this.querySelector("#btn-search");
+    const settingsBtn = this.querySelector("#btn-settings");
     if (input) {
       input.addEventListener("input", (ev) => {
         this.state.top.query = ev.target.value;
@@ -464,6 +524,31 @@ class LupaShell extends HTMLElement {
       });
     }
     if (btn) btn.addEventListener("click", async () => this.runSearch());
+    if (settingsBtn) {
+      settingsBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.state.settings.open = !this.state.settings.open;
+        this.paint();
+      });
+    }
+    this.querySelectorAll(".lang-item[data-lang]").forEach((el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this.setLanguage(el.getAttribute("data-lang") || "es");
+      });
+    });
+    if (settingsOpen) {
+      document.addEventListener(
+        "click",
+        () => {
+          if (this.state.settings.open) {
+            this.state.settings.open = false;
+            this.paint();
+          }
+        },
+        { once: true },
+      );
+    }
 
     if (!this._hotkeysBound) {
       this._onKeyDown = async (ev) => {
@@ -573,12 +658,12 @@ class LupaShell extends HTMLElement {
   async runPathAction(action, path) {
     const safePath = String(path || "").trim();
     if (!safePath) {
-      this.state.app.status = "No file selected";
+      this.state.app.status = this.t("no_file_selected");
       this.paint();
       return;
     }
     if (this.mode !== "tauri") {
-      this.state.app.status = "Action requires desktop mode";
+      this.state.app.status = this.t("action_requires_desktop");
       this.paint();
       return;
     }
@@ -596,9 +681,9 @@ class LupaShell extends HTMLElement {
           req: { path: safePath, query: String(this.state.top.query || "") },
         });
       }
-      this.state.app.status = `Action done: ${action}`;
+      this.state.app.status = this.t("action_done", { action });
     } catch (err) {
-      this.state.app.status = `Action error: ${err}`;
+      this.state.app.status = this.t("action_error", { error: err });
     }
     this.paint();
   }
@@ -606,7 +691,7 @@ class LupaShell extends HTMLElement {
   async runSearch() {
     const query = (this.state.top.query || "").trim();
     if (!query) {
-      this.state.app.status = "Type a query";
+      this.state.app.status = this.t("type_a_query");
       this.paint();
       return;
     }
@@ -625,14 +710,18 @@ class LupaShell extends HTMLElement {
     this.state.results.took_ms = null;
     this.state.results.visible_count = 0;
     this.state.top.hits = 0;
-    this.state.sidebar.collections = withCollectionCounts([], this.state.sidebar.selected_filter || "recents");
+    this.state.sidebar.collections = withCollectionCounts(
+      [],
+      this.state.sidebar.selected_filter || "recents",
+      this.lang(),
+    );
     this.state.top.busy = true;
-    this.state.app.status = `Searching "${query}"...`;
+    this.state.app.status = this.t("searching", { query });
     this.paint();
 
     if (this.mode !== "tauri") {
       this.state.top.busy = false;
-      this.state.app.status = "Bridge mode: search runs only in desktop-tauri";
+      this.state.app.status = this.t("bridge_search_only");
       this.paint();
       return;
     }
@@ -667,11 +756,12 @@ class LupaShell extends HTMLElement {
       this.state.sidebar.collections = withCollectionCounts(
         mapped.items,
         this.state.sidebar.selected_filter || "recents",
+        this.lang(),
       );
       this.state.app.status =
         target > firstBatch
-          ? `${mapped.total_hits} results | rendering ${firstBatch}/${target}`
-          : `${mapped.total_hits} results`;
+          ? this.t("results_rendering", { hits: mapped.total_hits, done: firstBatch, total: target })
+          : this.t("results_done", { hits: mapped.total_hits });
       this.selectFirstFromActiveCollection();
       this.scheduleProgressiveReveal(token, target);
       this.scheduleSnippetHydration(token, query);
@@ -679,7 +769,7 @@ class LupaShell extends HTMLElement {
       if (token !== this._searchToken) {
         return;
       }
-      this.state.app.status = `Search error: ${err}`;
+      this.state.app.status = this.t("search_error", { error: err });
       this.state.top.busy = false;
       this.paint();
       return;
@@ -717,11 +807,15 @@ class LupaShell extends HTMLElement {
       const next = Math.min(targetVisible, current + step);
       this.state.results.visible_count = next;
       if (next >= targetVisible) {
-        this.state.app.status = `${this.state.results.total_hits} results`;
+        this.state.app.status = this.t("results_done", { hits: this.state.results.total_hits });
         clearInterval(this._progressiveTimer);
         this._progressiveTimer = null;
       } else {
-        this.state.app.status = `${this.state.results.total_hits} results | rendering ${next}/${targetVisible}`;
+        this.state.app.status = this.t("results_rendering", {
+          hits: this.state.results.total_hits,
+          done: next,
+          total: targetVisible,
+        });
       }
       this.paint();
       this.scheduleSnippetHydration(token, this.state.top.query || "");
@@ -785,7 +879,7 @@ class LupaShell extends HTMLElement {
 
   async pickRootFolder() {
     if (this.mode !== "tauri") {
-      this.state.app.status = "Folder picker requires desktop mode";
+      this.state.app.status = this.t("folder_picker_requires_desktop");
       this.paint();
       return;
     }
@@ -793,47 +887,51 @@ class LupaShell extends HTMLElement {
       const picked = await invokeDesktop("pick_folder", {});
       if (picked && String(picked).trim()) {
         this.state.app.root = String(picked);
-        this.state.app.status = `Root set: ${this.state.app.root}`;
+        this.state.app.status = this.t("root_set", { root: this.state.app.root });
       } else {
-        this.state.app.status = "Folder selection cancelled";
+        this.state.app.status = this.t("folder_selection_cancelled");
       }
     } catch (err) {
-      this.state.app.status = `Folder picker error: ${err}`;
+      this.state.app.status = this.t("folder_picker_error", { error: err });
     }
     this.paint();
   }
 
   async runDoctor() {
     if (this.mode !== "tauri") {
-      this.state.app.status = "Doctor requires desktop mode";
+      this.state.app.status = this.t("doctor_requires_desktop");
       this.paint();
       return;
     }
     try {
       const report = await invokeDesktop("doctor", { req: { root: this.state.app.root || "" } });
-      this.state.app.status = `Doctor ok | checks: ${(report.checks || []).length}`;
+      this.state.app.status = this.t("doctor_ok", { count: (report.checks || []).length });
     } catch (err) {
-      this.state.app.status = `Doctor error: ${err}`;
+      this.state.app.status = this.t("doctor_error", { error: err });
     }
     this.paint();
   }
 
   async runBuild(metadataOnly = false) {
     if (this.mode !== "tauri") {
-      this.state.app.status = "Build requires desktop mode";
+      this.state.app.status = this.t("build_requires_desktop");
       this.paint();
       return;
     }
     this.state.top.busy = true;
-    this.state.app.status = metadataOnly ? "Syncing monitor..." : "Building index...";
+    this.state.app.status = metadataOnly ? this.t("syncing_monitor") : this.t("building_index");
     this.paint();
     try {
       const stats = await invokeDesktop("build_index", {
         req: { root: this.state.app.root || "", metadata_only: metadataOnly },
       });
-      this.state.app.status = `Index done | scanned:${stats.scanned} new:${stats.indexed_new} updated:${stats.indexed_updated}`;
+      this.state.app.status = this.t("index_done", {
+        scanned: stats.scanned,
+        new: stats.indexed_new,
+        updated: stats.indexed_updated,
+      });
     } catch (err) {
-      this.state.app.status = `Build error: ${err}`;
+      this.state.app.status = this.t("build_error", { error: err });
     } finally {
       this.state.top.busy = false;
       this.paint();
@@ -845,12 +943,12 @@ class LupaShell extends HTMLElement {
       clearInterval(this.monitorTimer);
       this.monitorTimer = null;
       this.state.top.watch_running = false;
-      this.state.app.status = "Monitor stopped";
+      this.state.app.status = this.t("monitor_stopped");
       this.paint();
       return;
     }
     this.state.top.watch_running = true;
-    this.state.app.status = "Monitor started";
+    this.state.app.status = this.t("monitor_started");
     this.paint();
     this.monitorTimer = setInterval(async () => {
       if (this.state.top.busy) return;
@@ -875,7 +973,7 @@ class LupaShell extends HTMLElement {
     const question = String(rawQuestion || "").trim();
     if (!question) return;
     if (!rp.selected_path) {
-      this.state.app.status = "Select a file first";
+      this.state.app.status = this.t("select_file_first");
       this.paint();
       return;
     }
@@ -884,13 +982,13 @@ class LupaShell extends HTMLElement {
     this.pushChatMessage("user", question);
     rp.chat_input = "";
     rp.chat_busy = true;
-    this.state.app.status = "Asking document...";
+    this.state.app.status = this.t("asking_document");
     this.paint();
 
     if (this.mode !== "tauri") {
-      this.pushChatMessage("assistant", "Desktop mode required for document chat.");
+      this.pushChatMessage("assistant", this.t("desktop_mode_required_chat"));
       rp.chat_busy = false;
-      this.state.app.status = "Chat requires desktop mode";
+      this.state.app.status = this.t("chat_requires_desktop");
       this.paint();
       return;
     }
@@ -904,11 +1002,11 @@ class LupaShell extends HTMLElement {
           mode: rp.chat_mode || "extractive",
         },
       });
-      const answer = String((res && res.answer) || "").trim() || "No answer.";
+      const answer = String((res && res.answer) || "").trim() || this.t("no_answer");
       this.pushChatMessage("assistant", answer);
-      this.state.app.status = "Chat answer ready";
+      this.state.app.status = this.t("chat_answer_ready");
     } catch (err) {
-      const msg = `Chat error: ${err}`;
+      const msg = this.t("chat_error", { error: err });
       this.pushChatMessage("assistant", msg);
       this.state.app.status = msg;
     } finally {
@@ -921,6 +1019,7 @@ class LupaShell extends HTMLElement {
 class LupaLeft extends HTMLElement {
   bind(shell) {
     const s = shell.state;
+    const t = (key, vars = {}) => shell.t(key, vars);
     const iconMap = {
       recents: "clock",
       documents: "file",
@@ -943,29 +1042,31 @@ class LupaLeft extends HTMLElement {
     this.innerHTML = `
       <aside class="left">
         <div class="left-scroll">
-          <p class="tiny-title">SYSTEM TOOLS</p>
-          <button class="tool-btn" id="btn-build"><span class="tool-glyph">${iconImg("hammer")}</span>Build Index</button>
-          <button class="tool-btn" id="btn-monitor"><span class="tool-glyph">${iconImg("pulse")}</span>${s.top.watch_running ? "Stop Monitor" : "Start Monitor"}</button>
-          <button class="tool-btn" id="btn-doctor"><span class="tool-glyph">${iconImg("shield")}</span>System Doctor</button>
+          <p class="tiny-title">${esc(t("system_tools"))}</p>
+          <button class="tool-btn" id="btn-build"><span class="tool-glyph">${iconImg("hammer")}</span>${esc(t("build_index"))}</button>
+          <button class="tool-btn" id="btn-monitor"><span class="tool-glyph">${iconImg("pulse")}</span>${esc(
+            s.top.watch_running ? t("stop_monitor") : t("start_monitor"),
+          )}</button>
+          <button class="tool-btn" id="btn-doctor"><span class="tool-glyph">${iconImg("shield")}</span>${esc(t("system_doctor"))}</button>
           <div class="rule"></div>
-          <p class="tiny-title">COLLECTIONS</p>
+          <p class="tiny-title">${esc(t("collections"))}</p>
           ${collections}
           <div class="rule"></div>
-          <p class="tiny-title">INDEX PATH</p>
+          <p class="tiny-title">${esc(t("index_path"))}</p>
           <div class="path-row">
             <div class="path-chip">
               <span class="mono path-value">${esc(s.app.root || "-")}</span>
             </div>
-            <button class="path-next" id="btn-root" title="Select folder">${iconImg("folder-open")}</button>
+            <button class="path-next" id="btn-root" title="${esc(t("select_folder"))}">${iconImg("folder-open")}</button>
           </div>
           <div class="rule"></div>
-          <p class="tiny-title">ADVANCED SEARCH</p>
-          <input class="adv-chip mono" id="adv-regex" placeholder="Regex (e.g. pdf|rs)" value="${esc(s.sidebar.regex || "")}" />
-          <input class="adv-chip mono" id="adv-path" placeholder="Path prefix (e.g. project)" value="${esc(s.sidebar.path_prefix || "")}" />
+          <p class="tiny-title">${esc(t("advanced_search"))}</p>
+          <input class="adv-chip mono" id="adv-regex" placeholder="${esc(t("regex_ph"))}" value="${esc(s.sidebar.regex || "")}" />
+          <input class="adv-chip mono" id="adv-path" placeholder="${esc(t("path_prefix_ph"))}" value="${esc(s.sidebar.path_prefix || "")}" />
           <input class="adv-chip mono" id="adv-limit" type="number" min="1" max="200" value="${Number(s.sidebar.limit || 20)}" />
           <div class="toggle-row">
             <span class="toggle-pill ${s.sidebar.show_snippets !== false ? "on" : "off"}" id="adv-snippets"></span>
-            <span>Show text snippets</span>
+            <span>${esc(t("show_text_snippets"))}</span>
           </div>
         </div>
         <div class="left-foot">LUPA v2.1.0 | Index ${esc(s.app.root || "-")}</div>
@@ -982,6 +1083,7 @@ class LupaLeft extends HTMLElement {
         shell.state.sidebar.collections = withCollectionCounts(
           shell.state.results.items || [],
           shell.state.sidebar.selected_filter,
+          shell.lang(),
         );
         shell.selectFirstFromActiveCollection();
       });
@@ -1017,7 +1119,7 @@ class LupaLeft extends HTMLElement {
           (shell.state.results.items || []).length,
           effectiveLimit(shell.state),
         );
-        shell.state.app.status = `Expanding search to ${effectiveLimit(shell.state)}...`;
+        shell.state.app.status = shell.t("expanding_search", { limit: effectiveLimit(shell.state) });
         shell.paint();
         shell.scheduleSearchRefresh(80);
       });
@@ -1028,7 +1130,7 @@ class LupaLeft extends HTMLElement {
             (shell.state.results.items || []).length,
             effectiveLimit(shell.state),
           );
-          shell.state.app.status = `Expanding search to ${effectiveLimit(shell.state)}...`;
+          shell.state.app.status = shell.t("expanding_search", { limit: effectiveLimit(shell.state) });
           shell.paint();
           shell.scheduleSearchRefresh(0);
         }
@@ -1054,6 +1156,7 @@ class LupaLeft extends HTMLElement {
 class LupaCenter extends HTMLElement {
   bind(shell) {
     const s = shell.state;
+    const t = (key, vars = {}) => shell.t(key, vars);
     const query = esc(s.top.query || "");
     const ms = s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`;
     const filtered = [];
@@ -1090,7 +1193,7 @@ class LupaCenter extends HTMLElement {
             </div>
             <div class="row-path mono">${esc(r.path)}</div>
             ${snip}
-            <div class="meta">- ${esc(r.size || "-")} - Modified ${esc(r.modified || "-")}</div>
+            <div class="meta">- ${esc(r.size || "-")} - ${esc(t("modified_label"))} ${esc(r.modified || "-")}</div>
           </div>
           <div class="rank">#${r.rank}</div>
         </article>`;
@@ -1101,21 +1204,21 @@ class LupaCenter extends HTMLElement {
       <main class="center">
         <div class="results-head">
           <div class="head-title-wrap">
-            <h2 class="results-title">Search Results</h2>
-            <div class="results-sub">for <b>"${query}"</b></div>
+            <h2 class="results-title">${esc(t("results_title"))}</h2>
+            <div class="results-sub">${esc(t("results_for", { query: s.top.query || "" }))}</div>
           </div>
-          <span class="chip chip-purple">${s.results.total_hits} hits</span>
+          <span class="chip chip-purple">${esc(t("hits_label", { hits: s.results.total_hits }))}</span>
           <span class="chip chip-green">${ms}</span>
         </div>
         <section class="rows">
           ${
             rows ||
-            '<article class="row row-empty"><div class="empty-block"><h3>No results yet</h3><p>Run a search from the top bar to see indexed files.</p></div></article>'
+            `<article class="row row-empty"><div class="empty-block"><h3>${esc(t("no_results_title"))}</h3><p>${esc(t("no_results_body"))}</p></div></article>`
           }
         </section>
         ${
           remaining > 0
-            ? `<button class="load-more" id="load-more-btn">Load more results | ${remaining} remaining</button>`
+            ? `<button class="load-more" id="load-more-btn">${esc(t("load_more", { remaining }))}</button>`
             : ""
         }
       </main>
@@ -1153,20 +1256,21 @@ class LupaCenter extends HTMLElement {
 class LupaRight extends HTMLElement {
   bind(shell) {
     const s = shell.state;
+    const t = (key, vars = {}) => shell.t(key, vars);
     const rp = s.right_panel || {};
     const preview = rp.tab !== "chat";
     const mode = rp.chat_mode === "local_model" ? "local" : "extractive";
     const path = esc(rp.selected_path || "-");
-    const file = esc(rp.file_name || "No file selected");
+    const file = esc(rp.file_name || t("no_file_selected"));
     const fileType = esc(rp.file_type || "-");
     const size = esc(rp.size || "-");
     const created = esc(rp.created || "-");
     const modified = esc(rp.modified || "-");
-    const snippet = rp.snippet ? markSnippet(rp.snippet, s.top.query) : "Sin fragmento para este formato o contenido.";
+    const snippet = rp.snippet ? markSnippet(rp.snippet, s.top.query) : t("no_snippet");
     const matchCount = Number(rp.match_count || 0);
     const previewMedia = isImageExt(rp.file_type)
       ? `<img class="preview-image" src="${esc(fileSrc(rp.selected_path))}" alt="${file}" loading="lazy" decoding="async" />`
-      : `<div class="preview-icon">${extLabel(rp.file_type)}</div><div class="preview-text">No preview available</div>`;
+      : `<div class="preview-icon">${extLabel(rp.file_type)}</div><div class="preview-text">${esc(t("no_preview"))}</div>`;
 
     const messages = (rp.chat_messages || [])
       .slice(-12)
@@ -1183,8 +1287,8 @@ class LupaRight extends HTMLElement {
       <aside class="right">
         <div class="right-head">
           <div class="tab-wrap">
-            <button class="tab ${preview ? "active" : ""}" id="tab-preview">Preview</button>
-            <button class="tab ${!preview ? "active" : ""}" id="tab-chat">AI Chat</button>
+            <button class="tab ${preview ? "active" : ""}" id="tab-preview">${esc(t("preview_tab"))}</button>
+            <button class="tab ${!preview ? "active" : ""}" id="tab-chat">${esc(t("ai_chat_tab"))}</button>
           </div>
           <button class="close" id="panel-close">x</button>
         </div>
@@ -1193,46 +1297,46 @@ class LupaRight extends HTMLElement {
             ? `
           <div class="right-scroll">
             <section class="right-block">
-              <p class="tiny-title">VISTA PREVIA</p>
+              <p class="tiny-title">${esc(t("preview_title"))}</p>
               <div class="preview-card">
                 ${previewMedia}
               </div>
             </section>
             <section class="right-block">
-              <p class="tiny-title">FILE INFO</p>
+              <p class="tiny-title">${esc(t("file_info"))}</p>
               <div class="info-grid">
-                <div class="info-row"><span class="k">NAME</span><span class="v">${file}</span></div>
-                <div class="info-row"><span class="k">PATH</span><span class="v mono">${path}</span></div>
-                <div class="info-row"><span class="k">TYPE</span><span class="v"><span class="mini-badge">${fileType} | ${size}</span></span></div>
-                <div class="info-row"><span class="k">CREATED</span><span class="v">${created}</span></div>
-                <div class="info-row"><span class="k">MODIFIED</span><span class="v">${modified}</span></div>
+                <div class="info-row"><span class="k">${esc(t("label_name"))}</span><span class="v">${file}</span></div>
+                <div class="info-row"><span class="k">${esc(t("label_path"))}</span><span class="v mono">${path}</span></div>
+                <div class="info-row"><span class="k">${esc(t("label_type"))}</span><span class="v"><span class="mini-badge">${fileType} | ${size}</span></span></div>
+                <div class="info-row"><span class="k">${esc(t("label_created"))}</span><span class="v">${created}</span></div>
+                <div class="info-row"><span class="k">${esc(t("label_modified"))}</span><span class="v">${modified}</span></div>
               </div>
             </section>
             <section class="right-block">
-              <p class="tiny-title">ACTIONS</p>
+              <p class="tiny-title">${esc(t("actions"))}</p>
               <div class="action-grid">
-                <button class="action-btn" data-action="open">Open</button>
-                <button class="action-btn" data-action="open_at_match">Open at match</button>
-                <button class="action-btn" data-action="open_with">Open with...</button>
-                <button class="action-btn" data-action="folder">Folder</button>
-                <button class="action-btn" data-action="copy_path">Copy path</button>
-                <button class="action-btn action-primary" id="ask-doc">Ask this doc</button>
+                <button class="action-btn" data-action="open">${esc(t("action_open"))}</button>
+                <button class="action-btn" data-action="open_at_match">${esc(t("action_open_at_match"))}</button>
+                <button class="action-btn" data-action="open_with">${esc(t("action_open_with"))}</button>
+                <button class="action-btn" data-action="folder">${esc(t("action_folder"))}</button>
+                <button class="action-btn" data-action="copy_path">${esc(t("action_copy_path"))}</button>
+                <button class="action-btn action-primary" id="ask-doc">${esc(t("action_ask_doc"))}</button>
               </div>
             </section>
             <section class="right-block">
-              <p class="tiny-title">COINCIDENCIA EN DOCUMENTO</p>
+              <p class="tiny-title">${esc(t("match_in_document"))}</p>
               <div class="snippet-box">
-                <div class="snippet-meta">Matches found: ${matchCount}</div>
+                <div class="snippet-meta">${esc(t("matches_found", { count: matchCount }))}</div>
                 <div class="snippet-text">${snippet}</div>
               </div>
             </section>
             <section class="right-block">
-              <p class="tiny-title">METRICAS</p>
+              <p class="tiny-title">${esc(t("metrics_title"))}</p>
               <div class="metrics-list">
-                <div class="metric-row"><span>Resultados</span><span>${s.results.total_hits}</span></div>
-                <div class="metric-row"><span>Tiempo busqueda</span><span>${s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`}</span></div>
-                <div class="metric-row"><span>Indexados</span><span>${s.top.hits || 0}</span></div>
-                <div class="metric-row"><span>Watch</span><span>${s.top.watch_running ? "ON" : "OFF"}</span></div>
+                <div class="metric-row"><span>${esc(t("metrics_results"))}</span><span>${s.results.total_hits}</span></div>
+                <div class="metric-row"><span>${esc(t("metrics_search_time"))}</span><span>${s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`}</span></div>
+                <div class="metric-row"><span>${esc(t("metrics_indexed"))}</span><span>${s.top.hits || 0}</span></div>
+                <div class="metric-row"><span>${esc(t("metrics_watch"))}</span><span>${s.top.watch_running ? "ON" : "OFF"}</span></div>
               </div>
             </section>
           </div>
@@ -1240,8 +1344,8 @@ class LupaRight extends HTMLElement {
             : `
           <div class="right-scroll chat-layout">
             <div class="chat-mode">
-              <button class="${mode === "extractive" ? "active" : ""}" id="mode-ext">Extractive</button>
-              <button class="${mode === "local" ? "active" : ""}" id="mode-local">Local AI</button>
+              <button class="${mode === "extractive" ? "active" : ""}" id="mode-ext">${esc(t("chat_mode_extractive"))}</button>
+              <button class="${mode === "local" ? "active" : ""}" id="mode-local">${esc(t("chat_mode_local"))}</button>
             </div>
             <div class="chat-doc">
               <div class="file-icon ${extClass(rp.file_type)}">${extLabel(rp.file_type)}</div>
@@ -1251,19 +1355,26 @@ class LupaRight extends HTMLElement {
               </div>
             </div>
             <div class="chat-quick">
-              <button class="quick active" data-quick="summary">Summary</button>
-              <button class="quick" data-quick="key_dates">Key dates</button>
-              <button class="quick" data-quick="main_topic">Main topic</button>
+              <button class="quick active" data-quick="summary">${esc(t("quick_summary"))}</button>
+              <button class="quick" data-quick="key_dates">${esc(t("quick_key_dates"))}</button>
+              <button class="quick" data-quick="main_topic">${esc(t("quick_main_topic"))}</button>
             </div>
             <div class="chat-feed">
-              <div class="chat-bubble system">Ready. Ask about '${file}'.</div>
-              ${messages || '<div class="chat-bubble assistant">I can answer from extracted snippets and file metadata in local mode.</div>'}
+              <div class="chat-bubble system">${esc(t("chat_ready_about", { file: rp.file_name || t("no_file_selected") }))}</div>
+              ${messages || `<div class="chat-bubble assistant">${esc(t("chat_default_assistant"))}</div>`}
             </div>
             <div class="chat-composer">
-              <textarea class="chat-input" placeholder="Ask about this document...">${esc(rp.chat_input || "")}</textarea>
+              <textarea class="chat-input" placeholder="${esc(t("chat_input_placeholder"))}">${esc(rp.chat_input || "")}</textarea>
               <div class="chat-actions">
-                <button class="send-btn"${rp.chat_busy ? " disabled" : ""}>${rp.chat_busy ? "Sending..." : "Send"}</button>
-                <button class="reset-btn"${rp.chat_busy ? " disabled" : ""}>O</button>
+                <button class="send-btn"${rp.chat_busy ? " disabled" : ""}>${rp.chat_busy ? esc(t("sending")) : esc(t("send"))}</button>
+                <button class="reset-btn" aria-label="${esc(t("reset"))}" title="${esc(t("reset"))}"${rp.chat_busy ? " disabled" : ""}>
+                  <svg class="reset-icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+                    <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3">
+                      <path d="M5.185 31.954C6.529 26.914 10.638 23 15.854 23c4.895 0 8.164 4.425 8.056 9.32l-.057 2.569a7 7 0 0 0 2.097 5.154l1.106 1.086c1.586 1.557.66 4.224-1.555 4.408c-2.866.237-6.41.463-9.501.463c-3.982 0-7.963-.375-10.45-.666c-1.472-.172-2.558-1.428-2.417-2.902c.32-3.363 1.174-7.188 2.052-10.478"/>
+                      <path d="M20 24.018c1.68-6.23 3.462-12.468 4.853-18.773c.219-.993-.048-2.01-1-2.365a8 8 0 0 0-.717-.226a8 8 0 0 0-.734-.162c-1.002-.17-1.742.578-2.048 1.547c-1.96 6.191-3.542 12.522-5.213 18.792M45 45H35m7-8H32m7-8H29m-18.951 8.75c-.167 1.5 0 5.2 2 8m5-7.75s0 5 2.951 7.5"/>
+                    </g>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>

@@ -137,6 +137,78 @@ kbd,
   background: linear-gradient(180deg, #0b0e18 0%, #090c15 100%);
 }
 
+.topbar-right {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.settings-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-78);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.settings-btn .icon-svg {
+  width: 15px;
+  height: 15px;
+  filter: brightness(0) invert(1);
+  opacity: 0.9;
+}
+
+.settings-menu {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  min-width: 170px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #0e1220;
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  z-index: 20;
+}
+
+.settings-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-42);
+  margin: 2px 6px 6px;
+  text-transform: uppercase;
+}
+
+.lang-item {
+  width: 100%;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-78);
+  text-align: left;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.lang-item.active {
+  border-color: rgba(126, 62, 255, 0.45);
+  background: rgba(126, 62, 255, 0.16);
+  color: #fff;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -280,12 +352,15 @@ kbd,
 }
 
 .metrics {
-  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--text-42);
   font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
 }
 
 .metrics .sep {
@@ -1223,6 +1298,15 @@ input.adv-chip::placeholder {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-58);
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.reset-icon-svg {
+  width: 16px;
+  height: 16px;
 }
 
 *::-webkit-scrollbar {
@@ -1260,8 +1344,12 @@ input.adv-chip::placeholder {
 
 @media (max-width: 1160px) {
   .topbar {
-    grid-template-columns: auto minmax(150px, 1fr) auto auto;
+    grid-template-columns: auto minmax(150px, 1fr) auto auto auto;
     gap: 8px;
+  }
+
+  .topbar-right {
+    justify-self: auto;
   }
 
   .v-divider,
@@ -1288,8 +1376,16 @@ input.adv-chip::placeholder {
   }
 
   .topbar {
-    grid-template-columns: minmax(120px, 1fr) auto auto;
+    grid-template-columns: minmax(120px, 1fr) auto auto auto;
     padding: 0 8px;
+  }
+
+  .settings-wrap {
+    display: none;
+  }
+
+  .topbar-right {
+    display: none;
   }
 
   .brand {
