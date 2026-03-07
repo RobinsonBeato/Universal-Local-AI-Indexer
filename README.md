@@ -3,6 +3,16 @@
 Ultra-fast local file indexer and search app for Windows, built in Rust.  
 Offline-first, privacy-first, no cloud services, no telemetry by default.
 
+## Download
+
+- Latest Windows installers (`.exe` and `.msi`):
+  `https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0`
+
+### Checksums (SHA-256)
+
+- `.exe`: `793d4b75e2b1e8b98c382265bd86fbd182b3d110a7e377fda1ce743a6d949376`
+- `.msi`: `b86448194b8dd48e08618f5e7eef18f0b7e806375cd2669ede454e15587af989`
+
 ## Why LUPA
 
 - Offline-first: all indexing and search run locally.
@@ -17,6 +27,10 @@ Offline-first, privacy-first, no cloud services, no telemetry by default.
 - `lupa` (CLI): automation-friendly indexing and search.
 - `lupa-desktop-tauri` (desktop): modern WebView UI powered by the same Rust core.
 - `lupa-gui` (legacy egui app): still available during transition/testing.
+
+## Screenshot
+
+![LUPA Desktop](docs/images/image-sample.png)
 
 ## What gets indexed
 
