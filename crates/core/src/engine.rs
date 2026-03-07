@@ -613,6 +613,18 @@ impl LupaEngine {
         })
     }
 
+    pub fn snippets_for_paths(&self, paths: &[String], query: &str) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            let content = self
+                .load_query_content(Path::new(path))
+                .unwrap_or_default();
+            let snippet = highlight_snippet(&content, query);
+            out.push((path.clone(), snippet));
+        }
+        Ok(out)
+    }
+
     pub fn doctor(&self) -> Result<DoctorReport> {
         std::fs::create_dir_all(&self.data_dir)?;
         let mut checks = Vec::new();

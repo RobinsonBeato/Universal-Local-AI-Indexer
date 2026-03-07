@@ -32,6 +32,13 @@ struct DoctorRequest {
     root: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct SnippetBatchRequest {
+    root: String,
+    query: String,
+    paths: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct PathRequest {
     path: String,
@@ -61,6 +68,17 @@ struct AskDocumentResponse {
 struct AskDocumentCitation {
     path: String,
     excerpt: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SnippetItem {
+    path: String,
+    snippet: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SnippetBatchResponse {
+    items: Vec<SnippetItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,6 +272,24 @@ async fn doctor(req: DoctorRequest) -> Result<DoctorReport, String> {
     })
     .await
     .map_err(|e| format!("doctor task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn fetch_snippets(req: SnippetBatchRequest) -> Result<SnippetBatchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = engine_for(&req.root)?;
+        let pairs = engine
+            .snippets_for_paths(&req.paths, &req.query)
+            .map_err(|e| e.to_string())?;
+        Ok::<SnippetBatchResponse, String>(SnippetBatchResponse {
+            items: pairs
+                .into_iter()
+                .map(|(path, snippet)| SnippetItem { path, snippet })
+                .collect(),
+        })
+    })
+    .await
+    .map_err(|e| format!("snippet task join error: {e}"))?
 }
 
 #[tauri::command]
@@ -459,6 +495,7 @@ fn main() {
             search,
             build_index,
             doctor,
+            fetch_snippets,
             open_path,
             open_with,
             open_folder,

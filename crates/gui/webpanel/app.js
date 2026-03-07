@@ -224,6 +224,7 @@ function mapSearchResult(query, res) {
       score: h.score || 0,
       selected: idx === 0,
       snippet: h.snippet || null,
+      snippet_loaded: !!h.snippet,
       size: formatBytes(h.size_bytes),
       modified: h.modified || "-",
       created: h.created || "-",
@@ -274,6 +275,8 @@ class LupaShell extends HTMLElement {
     this._refreshTimer = null;
     this._searchToken = 0;
     this._progressiveTimer = null;
+    this._snippetTimer = null;
+    this._snippetBusy = false;
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
@@ -297,6 +300,7 @@ class LupaShell extends HTMLElement {
     if (this.timer) clearInterval(this.timer);
     if (this.monitorTimer) clearInterval(this.monitorTimer);
     if (this._progressiveTimer) clearInterval(this._progressiveTimer);
+    if (this._snippetTimer) clearInterval(this._snippetTimer);
     if (this._refreshTimer) clearTimeout(this._refreshTimer);
     if (this._hotkeysBound) {
       window.removeEventListener("keydown", this._onKeyDown);
@@ -587,6 +591,17 @@ class LupaShell extends HTMLElement {
       clearInterval(this._progressiveTimer);
       this._progressiveTimer = null;
     }
+    if (this._snippetTimer) {
+      clearInterval(this._snippetTimer);
+      this._snippetTimer = null;
+    }
+    this._snippetBusy = false;
+    this.state.results.items = [];
+    this.state.results.total_hits = 0;
+    this.state.results.took_ms = null;
+    this.state.results.visible_count = 0;
+    this.state.top.hits = 0;
+    this.state.sidebar.collections = withCollectionCounts([], this.state.sidebar.selected_filter || "recents");
     this.state.top.busy = true;
     this.state.app.status = `Searching "${query}"...`;
     this.paint();
@@ -607,7 +622,7 @@ class LupaShell extends HTMLElement {
           limit: this.state.sidebar.limit || 20,
           path_prefix: this.state.sidebar.path_prefix || null,
           regex: this.state.sidebar.regex || null,
-          highlight: this.state.sidebar.show_snippets !== false,
+          highlight: false,
         },
       });
 
@@ -635,6 +650,7 @@ class LupaShell extends HTMLElement {
           : `${mapped.total_hits} results`;
       this.selectFirstFromActiveCollection();
       this.scheduleProgressiveReveal(token, target);
+      this.scheduleSnippetHydration(token, query);
     } catch (err) {
       if (token !== this._searchToken) {
         return;
@@ -684,7 +700,63 @@ class LupaShell extends HTMLElement {
         this.state.app.status = `${this.state.results.total_hits} results | rendering ${next}/${targetVisible}`;
       }
       this.paint();
-    }, 16);
+      this.scheduleSnippetHydration(token, this.state.top.query || "");
+    }, 33);
+  }
+
+  scheduleSnippetHydration(token, query) {
+    if (this.mode !== "tauri") return;
+    if (this.state.sidebar.show_snippets === false) return;
+    if (!query || !query.trim()) return;
+    if (this._snippetTimer) return;
+
+    this._snippetTimer = setInterval(async () => {
+      if (token !== this._searchToken) {
+        clearInterval(this._snippetTimer);
+        this._snippetTimer = null;
+        this._snippetBusy = false;
+        return;
+      }
+      if (this._snippetBusy) return;
+
+      const maxVisible = Number(this.state.results.visible_count || 0);
+      const pending = (this.state.results.items || [])
+        .slice(0, maxVisible)
+        .filter((it) => !it.snippet_loaded)
+        .slice(0, 12);
+
+      if (pending.length === 0) {
+        clearInterval(this._snippetTimer);
+        this._snippetTimer = null;
+        return;
+      }
+
+      this._snippetBusy = true;
+      try {
+        const res = await invokeDesktop("fetch_snippets", {
+          req: {
+            root: this.state.app.root || "",
+            query,
+            paths: pending.map((p) => p.path),
+          },
+        });
+        if (token !== this._searchToken) return;
+        const snippetByPath = new Map((res.items || []).map((it) => [String(it.path), String(it.snippet || "")]));
+        let changed = false;
+        for (const it of this.state.results.items || []) {
+          if (!it.snippet_loaded && snippetByPath.has(it.path)) {
+            it.snippet = snippetByPath.get(it.path) || "";
+            it.snippet_loaded = true;
+            changed = true;
+          }
+        }
+        if (changed) this.paint();
+      } catch {
+        // Keep UI responsive even if snippet batch fails.
+      } finally {
+        this._snippetBusy = false;
+      }
+    }, 70);
   }
 
   async pickRootFolder() {
@@ -942,6 +1014,9 @@ class LupaLeft extends HTMLElement {
       snippetsToggle.addEventListener("click", () => {
         shell.state.sidebar.show_snippets = !(shell.state.sidebar.show_snippets !== false);
         shell.paint();
+        if (shell.state.sidebar.show_snippets !== false) {
+          shell.scheduleSnippetHydration(shell._searchToken, shell.state.top.query || "");
+        }
       });
     }
 
@@ -973,7 +1048,8 @@ class LupaCenter extends HTMLElement {
       .map((r, rowPos) => {
         const active = r.selected ? " active" : "";
         const badge = esc((r.ext || "file").toUpperCase());
-        const snip = r.snippet
+        const hasSnippet = typeof r.snippet === "string" && r.snippet.length > 0;
+        const snip = hasSnippet
           ? rowPos < 100
             ? `<div class="row-snippet">${markSnippet(r.snippet, s.top.query)}</div>`
             : `<div class="row-snippet">${esc(String(r.snippet).slice(0, 220))}</div>`
