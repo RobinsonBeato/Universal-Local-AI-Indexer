@@ -84,14 +84,14 @@ Filesystem Crawl -> Extractors -> SQLite metadata + Tantivy index -> Query engin
 User query:
 
 ```text
-casa
+Find project documents that mention "incremental indexing" in the last 30 days
 ```
 
 Typical output behavior:
 
 - Ranked file hits with extension/type badges.
-- Text snippets with term highlighting.
-- Right panel metadata (`created`, `modified`, `size`) and quick actions.
+- Text snippets with query-term highlighting.
+- Right-panel metadata (`created`, `modified`, `size`) and quick actions (`Open`, `Open with`, `Folder`).
 
 ## What gets indexed
 
@@ -156,6 +156,33 @@ JSON output example:
 
 ```bash
 cargo run -p lupa -- --root "G:\\" search "query" --json
+```
+
+Example JSON output (trimmed):
+
+```json
+{
+  "query": "incremental indexing",
+  "total_hits": 24,
+  "took_ms": 18,
+  "hits": [
+    {
+      "path": "D:/Projects/Lupa/docs/architecture.md",
+      "score": 19.42,
+      "snippet": "Incremental strategy: mtime + size and optional xxhash for small files..."
+    },
+    {
+      "path": "D:/Projects/Lupa/crates/core/src/engine.rs",
+      "score": 15.07,
+      "snippet": "Only changed files are enqueued for re-indexing; unchanged entries are skipped..."
+    },
+    {
+      "path": "D:/Projects/Lupa/docs/benchmarks.md",
+      "score": 11.83,
+      "snippet": "Run 10 queries and report p95 latency on warm index..."
+    }
+  ]
+}
 ```
 
 ### 4) Keep index fresh
