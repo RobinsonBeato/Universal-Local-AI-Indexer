@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ClipboardManager;
 use tauri::Manager;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct SearchRequest {
     root: String,
     query: String,
@@ -21,13 +21,13 @@ struct SearchRequest {
     highlight: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct BuildRequest {
     root: String,
     metadata_only: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct DoctorRequest {
     root: String,
 }
@@ -204,7 +204,7 @@ fn bootstrap() -> Result<BootstrapResponse, String> {
 }
 
 #[tauri::command]
-fn search(req: SearchRequest) -> Result<SearchResult, String> {
+async fn search(req: SearchRequest) -> Result<SearchResult, String> {
     if req.query.trim().is_empty() {
         return Ok(SearchResult {
             query: String::new(),
@@ -214,34 +214,46 @@ fn search(req: SearchRequest) -> Result<SearchResult, String> {
         });
     }
 
-    let engine = engine_for(&req.root)?;
-    let opts = SearchOptions {
-        limit: req.limit.unwrap_or(20),
-        path_prefix: req.path_prefix.filter(|s| !s.trim().is_empty()),
-        regex: req.regex.filter(|s| !s.trim().is_empty()),
-        highlight: req.highlight.unwrap_or(true),
-    };
-    engine.search(&req.query, &opts).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = engine_for(&req.root)?;
+        let opts = SearchOptions {
+            limit: req.limit.unwrap_or(20),
+            path_prefix: req.path_prefix.filter(|s| !s.trim().is_empty()),
+            regex: req.regex.filter(|s| !s.trim().is_empty()),
+            highlight: req.highlight.unwrap_or(true),
+        };
+        engine.search(&req.query, &opts).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("search task join error: {e}"))?
 }
 
 #[tauri::command]
-fn build_index(req: BuildRequest) -> Result<IndexStats, String> {
-    let engine = engine_for(&req.root)?;
-    if req.metadata_only.unwrap_or(false) {
-        engine
-            .build_metadata_only_with_progress(|_| {})
-            .map_err(|e| e.to_string())
-    } else {
-        engine
-            .build_incremental_with_progress(|_| {})
-            .map_err(|e| e.to_string())
-    }
+async fn build_index(req: BuildRequest) -> Result<IndexStats, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = engine_for(&req.root)?;
+        if req.metadata_only.unwrap_or(false) {
+            engine
+                .build_metadata_only_with_progress(|_| {})
+                .map_err(|e| e.to_string())
+        } else {
+            engine
+                .build_incremental_with_progress(|_| {})
+                .map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("build task join error: {e}"))?
 }
 
 #[tauri::command]
-fn doctor(req: DoctorRequest) -> Result<DoctorReport, String> {
-    let engine = engine_for(&req.root)?;
-    engine.doctor().map_err(|e| e.to_string())
+async fn doctor(req: DoctorRequest) -> Result<DoctorReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = engine_for(&req.root)?;
+        engine.doctor().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("doctor task join error: {e}"))?
 }
 
 #[tauri::command]

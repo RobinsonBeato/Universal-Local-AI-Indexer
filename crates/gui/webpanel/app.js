@@ -885,6 +885,7 @@ class LupaLeft extends HTMLElement {
           (shell.state.results.items || []).length,
           effectiveLimit(shell.state),
         );
+        shell.state.app.status = `Expanding search to ${effectiveLimit(shell.state)}...`;
         shell.paint();
         shell.scheduleSearchRefresh(80);
       });
@@ -895,6 +896,7 @@ class LupaLeft extends HTMLElement {
             (shell.state.results.items || []).length,
             effectiveLimit(shell.state),
           );
+          shell.state.app.status = `Expanding search to ${effectiveLimit(shell.state)}...`;
           shell.paint();
           shell.scheduleSearchRefresh(0);
         }
@@ -936,7 +938,9 @@ class LupaCenter extends HTMLElement {
         const active = r.selected ? " active" : "";
         const badge = esc((r.ext || "file").toUpperCase());
         const snip = r.snippet
-          ? `<div class="row-snippet">${markSnippet(r.snippet, s.top.query)}</div>`
+          ? rowPos < 100
+            ? `<div class="row-snippet">${markSnippet(r.snippet, s.top.query)}</div>`
+            : `<div class="row-snippet">${esc(String(r.snippet).slice(0, 220))}</div>`
           : "";
         const thumb = isImageExt(r.ext) && rowPos < 80
           ? `<img class="row-thumb" src="${esc(fileSrc(r.path))}" alt="${esc(r.name)}" loading="lazy" decoding="async" />`
