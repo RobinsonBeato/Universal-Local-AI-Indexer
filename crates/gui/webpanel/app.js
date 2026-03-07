@@ -271,9 +271,9 @@ class LupaShell extends HTMLElement {
     this.state = JSON.parse(JSON.stringify(EMPTY));
     this.monitorTimer = null;
     this._hotkeysBound = false;
-    this._searchInFlight = false;
-    this._pendingSearch = false;
     this._refreshTimer = null;
+    this._searchToken = 0;
+    this._progressiveTimer = null;
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
@@ -296,6 +296,8 @@ class LupaShell extends HTMLElement {
   disconnectedCallback() {
     if (this.timer) clearInterval(this.timer);
     if (this.monitorTimer) clearInterval(this.monitorTimer);
+    if (this._progressiveTimer) clearInterval(this._progressiveTimer);
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
     if (this._hotkeysBound) {
       window.removeEventListener("keydown", this._onKeyDown);
       this._hotkeysBound = false;
@@ -580,18 +582,16 @@ class LupaShell extends HTMLElement {
       this.paint();
       return;
     }
-    if (this._searchInFlight) {
-      this._pendingSearch = true;
-      return;
+    const token = ++this._searchToken;
+    if (this._progressiveTimer) {
+      clearInterval(this._progressiveTimer);
+      this._progressiveTimer = null;
     }
-
-    this._searchInFlight = true;
     this.state.top.busy = true;
-    this.state.app.status = "Searching...";
+    this.state.app.status = `Searching "${query}"...`;
     this.paint();
 
     if (this.mode !== "tauri") {
-      this._searchInFlight = false;
       this.state.top.busy = false;
       this.state.app.status = "Bridge mode: search runs only in desktop-tauri";
       this.paint();
@@ -612,10 +612,16 @@ class LupaShell extends HTMLElement {
       });
 
       const mapped = mapSearchResult(query, res);
+      if (token !== this._searchToken) {
+        return;
+      }
       this.state.results.total_hits = mapped.total_hits;
       this.state.results.took_ms = mapped.took_ms;
       this.state.results.items = mapped.items;
-      this.state.results.visible_count = Math.min(mapped.items.length, effectiveLimit(this.state));
+      const limit = effectiveLimit(this.state);
+      const target = Math.min(mapped.items.length, limit);
+      const firstBatch = Math.min(target, 40);
+      this.state.results.visible_count = firstBatch;
       this.state.top.latency_ms = mapped.took_ms;
       this.state.top.hits = mapped.total_hits;
       this.state.top.query = query;
@@ -623,21 +629,24 @@ class LupaShell extends HTMLElement {
         mapped.items,
         this.state.sidebar.selected_filter || "recents",
       );
-      this.state.app.status = `${mapped.total_hits} results`;
+      this.state.app.status =
+        target > firstBatch
+          ? `${mapped.total_hits} results | rendering ${firstBatch}/${target}`
+          : `${mapped.total_hits} results`;
       this.selectFirstFromActiveCollection();
+      this.scheduleProgressiveReveal(token, target);
     } catch (err) {
+      if (token !== this._searchToken) {
+        return;
+      }
       this.state.app.status = `Search error: ${err}`;
-      this._searchInFlight = false;
       this.state.top.busy = false;
       this.paint();
       return;
     }
-    this._searchInFlight = false;
-    this.state.top.busy = false;
-    this.paint();
-    if (this._pendingSearch) {
-      this._pendingSearch = false;
-      this.runSearch();
+    if (token === this._searchToken) {
+      this.state.top.busy = false;
+      this.paint();
     }
   }
 
@@ -649,6 +658,33 @@ class LupaShell extends HTMLElement {
       this._refreshTimer = null;
       this.runSearch();
     }, delayMs);
+  }
+
+  scheduleProgressiveReveal(token, targetVisible) {
+    if (targetVisible <= (this.state.results.visible_count || 0)) return;
+    if (this._progressiveTimer) {
+      clearInterval(this._progressiveTimer);
+      this._progressiveTimer = null;
+    }
+    const step = targetVisible > 140 ? 30 : 20;
+    this._progressiveTimer = setInterval(() => {
+      if (token !== this._searchToken) {
+        clearInterval(this._progressiveTimer);
+        this._progressiveTimer = null;
+        return;
+      }
+      const current = Number(this.state.results.visible_count || 0);
+      const next = Math.min(targetVisible, current + step);
+      this.state.results.visible_count = next;
+      if (next >= targetVisible) {
+        this.state.app.status = `${this.state.results.total_hits} results`;
+        clearInterval(this._progressiveTimer);
+        this._progressiveTimer = null;
+      } else {
+        this.state.app.status = `${this.state.results.total_hits} results | rendering ${next}/${targetVisible}`;
+      }
+      this.paint();
+    }, 16);
   }
 
   async pickRootFolder() {
