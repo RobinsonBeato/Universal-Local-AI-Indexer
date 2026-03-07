@@ -91,6 +91,42 @@ struct ModelServerState {
     child: Mutex<Option<Child>>,
 }
 
+#[derive(Default)]
+struct CpuState {
+    sample: Mutex<CpuSampleState>,
+}
+
+#[derive(Default, Clone, Copy)]
+struct CpuSampleState {
+    prev_idle: u64,
+    prev_kernel: u64,
+    prev_user: u64,
+    initialized: bool,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct FileTime {
+    dw_low_date_time: u32,
+    dw_high_date_time: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetSystemTimes(
+        lp_idle_time: *mut FileTime,
+        lp_kernel_time: *mut FileTime,
+        lp_user_time: *mut FileTime,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+fn file_time_to_u64(ft: FileTime) -> u64 {
+    ((ft.dw_high_date_time as u64) << 32) | (ft.dw_low_date_time as u64)
+}
+
 fn engine_for(root: &str) -> Result<LupaEngine, String> {
     let root_path = if root.trim().is_empty() {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -127,8 +163,37 @@ fn normalize_qa_paths(cfg: &mut LupaConfig) {
 
 #[cfg(target_os = "windows")]
 fn shell_path(p: &PathBuf) -> String {
-    let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-    abs.display().to_string().replace('/', "\\")
+    let abs = if p.is_absolute() {
+        p.clone()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
+    };
+    let mut s = abs.display().to_string().replace('/', "\\");
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        s = rest.to_string();
+    }
+    s
+}
+
+#[cfg(target_os = "windows")]
+fn ps_single_quote(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_powershell_hidden(script: &str) -> Result<(), String> {
+    Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-WindowStyle")
+        .arg("Hidden")
+        .arg("-Command")
+        .arg(script)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn server_alive(endpoint: &str) -> bool {
@@ -225,6 +290,55 @@ fn bootstrap() -> Result<BootstrapResponse, String> {
         .display()
         .to_string();
     Ok(BootstrapResponse { project_root })
+}
+
+#[tauri::command]
+fn cpu_usage(cpu_state: tauri::State<CpuState>) -> Result<f32, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut idle = FileTime::default();
+        let mut kernel = FileTime::default();
+        let mut user = FileTime::default();
+        let ok = unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) };
+        if ok == 0 {
+            return Err("GetSystemTimes failed".to_string());
+        }
+
+        let idle_now = file_time_to_u64(idle);
+        let kernel_now = file_time_to_u64(kernel);
+        let user_now = file_time_to_u64(user);
+        let mut guard = cpu_state
+            .sample
+            .lock()
+            .map_err(|_| "cpu sample lock poisoned".to_string())?;
+        if !guard.initialized {
+            guard.prev_idle = idle_now;
+            guard.prev_kernel = kernel_now;
+            guard.prev_user = user_now;
+            guard.initialized = true;
+            return Ok(0.0);
+        }
+
+        let idle_delta = idle_now.saturating_sub(guard.prev_idle);
+        let kernel_delta = kernel_now.saturating_sub(guard.prev_kernel);
+        let user_delta = user_now.saturating_sub(guard.prev_user);
+        guard.prev_idle = idle_now;
+        guard.prev_kernel = kernel_now;
+        guard.prev_user = user_now;
+
+        let total = kernel_delta.saturating_add(user_delta);
+        if total == 0 {
+            return Ok(0.0);
+        }
+        let busy = total.saturating_sub(idle_delta) as f64;
+        let pct = ((busy / total as f64) * 100.0).clamp(0.0, 100.0) as f32;
+        Ok(pct)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cpu_state;
+        Ok(0.0)
+    }
 }
 
 #[tauri::command]
@@ -333,18 +447,15 @@ fn open_with(req: PathRequest) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let path_arg = shell_path(&p);
-        let quoted = format!("\"{path_arg}\"");
         let launched = Command::new("OpenWith.exe").arg(&path_arg).spawn();
-        if launched.is_err() {
-            let launched2 = Command::new("rundll32.exe")
-                .arg("shell32.dll,OpenAs_RunDLL")
-                .arg(&quoted)
-                .spawn();
-            if launched2.is_err() {
-                return Err("Open with failed to launch".to_string());
-            }
+        if launched.is_ok() {
+            return Ok(());
         }
-        Ok(())
+
+        let escaped = ps_single_quote(&path_arg);
+        let script =
+            format!("$p='{escaped}'; Start-Process -FilePath $p -Verb OpenAs -ErrorAction SilentlyContinue");
+        spawn_powershell_hidden(&script)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -361,20 +472,26 @@ fn open_folder(req: PathRequest) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let path_arg = shell_path(&p);
-        let select_arg = format!("/select,\"{path_arg}\"");
-        let launched = Command::new("explorer.exe").arg(&select_arg).spawn();
-        if launched.is_err() {
-            let folder = p
-                .parent()
-                .map(|v| v.to_path_buf())
-                .unwrap_or_else(|| p.clone());
-            let folder_arg = shell_path(&folder);
-            let launched_folder = Command::new("explorer.exe").arg(&folder_arg).spawn();
-            if launched_folder.is_err() {
-                return Err("Open folder failed to launch".to_string());
-            }
+        let escaped = ps_single_quote(&path_arg);
+
+        // Use the exact file path already known by the app and ask Explorer to select it.
+        // Passing '/select,' and path as separate argument avoids malformed parsing.
+        let select_script = format!(
+            "$p='{escaped}'; Start-Process explorer.exe -ArgumentList '/select,', $p"
+        );
+        if spawn_powershell_hidden(&select_script).is_ok() {
+            return Ok(());
         }
-        Ok(())
+
+        // Fallback: open the parent directory for the same file path.
+        let parent = p
+            .parent()
+            .map(|v| v.to_path_buf())
+            .unwrap_or_else(|| p.clone());
+        let parent_arg = shell_path(&parent);
+        let parent_escaped = ps_single_quote(&parent_arg);
+        let fallback_script = format!("$p='{parent_escaped}'; Start-Process explorer.exe -ArgumentList $p");
+        spawn_powershell_hidden(&fallback_script)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -494,6 +611,7 @@ fn ask_document(
 fn main() {
     tauri::Builder::default()
         .manage(ModelServerState::default())
+        .manage(CpuState::default())
         .setup(|app| {
             let app_handle = app.handle();
             std::thread::spawn(move || {
@@ -508,6 +626,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap,
+            cpu_usage,
             search,
             build_index,
             doctor,

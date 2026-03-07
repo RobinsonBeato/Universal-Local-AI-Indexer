@@ -1,7 +1,7 @@
 const EMPTY = {
   generated_at: "",
   app: { status: "Ready", root: "" },
-  top: { query: "", busy: false, watch_running: false, hits: 0, latency_ms: null },
+  top: { query: "", busy: false, watch_running: false, hits: 0, latency_ms: null, cpu_pct: null },
   sidebar: {
     selected_filter: "recents",
     collections: [
@@ -277,6 +277,7 @@ class LupaShell extends HTMLElement {
     this._progressiveTimer = null;
     this._snippetTimer = null;
     this._snippetBusy = false;
+    this._cpuTimer = null;
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
@@ -302,6 +303,7 @@ class LupaShell extends HTMLElement {
     if (this._progressiveTimer) clearInterval(this._progressiveTimer);
     if (this._snippetTimer) clearInterval(this._snippetTimer);
     if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    if (this._cpuTimer) clearInterval(this._cpuTimer);
     if (this._hotkeysBound) {
       window.removeEventListener("keydown", this._onKeyDown);
       this._hotkeysBound = false;
@@ -319,6 +321,29 @@ class LupaShell extends HTMLElement {
     this.state.app.root = (boot && boot.project_root) || "";
     this.state.app.status = "Desktop mode ready";
     this.paint();
+    this.startCpuTelemetry();
+  }
+
+  startCpuTelemetry() {
+    if (this.mode !== "tauri") return;
+    if (this._cpuTimer) return;
+    const tick = async () => {
+      try {
+        const value = await invokeDesktop("cpu_usage", {});
+        const n = Number(value);
+        if (Number.isFinite(n)) {
+          this.state.top.cpu_pct = Math.max(0, Math.min(100, n));
+          const cpuNode = this.querySelector(".metrics .w");
+          if (cpuNode) {
+            cpuNode.textContent = `${Math.round(this.state.top.cpu_pct)}%`;
+          }
+        }
+      } catch {
+        // Keep UI stable if telemetry call fails.
+      }
+    };
+    tick();
+    this._cpuTimer = setInterval(tick, 1000);
   }
 
   paint() {
@@ -334,7 +359,7 @@ class LupaShell extends HTMLElement {
     const s = this.state;
     const lat = s.results.took_ms == null ? "N/A" : `${s.results.took_ms}ms`;
     const stateText = s.top.busy ? "Indexing" : "Idle";
-    const cpu = s.top.busy ? "busy" : "5%";
+    const cpu = Number.isFinite(s.top.cpu_pct) ? `${Math.round(s.top.cpu_pct)}%` : "N/A";
     const rightCol = s.right_panel.visible === false ? "0px" : "340px";
     const leftCol = "236px";
 
@@ -347,7 +372,7 @@ class LupaShell extends HTMLElement {
           </div>
           <div class="v-divider"></div>
           <div class="search-wrap">
-            <span class="search-glyph">Q</span>
+            <span class="search-glyph">${iconImg("search")}</span>
             <input class="search-input" value="${esc(s.top.query || "")}" placeholder="Search files, docs, content..." />
             <div class="kbd-group">
               <span class="kbd-chip">Ctrl</span>
@@ -357,12 +382,11 @@ class LupaShell extends HTMLElement {
           <button class="search-btn" id="btn-search">Search</button>
           <div class="state-pill"><span class="state-dot"></span>${stateText}</div>
           <div class="metrics">
-            <span>FPS <span class="metric">N/A</span></span>
-            <span class="sep"></span>
-            <span>GPU <span class="metric">0%</span></span>
-            <span class="sep"></span>
-            <span>CPU <span class="w">${cpu}</span></span>
-            <span class="sep"></span>
+            
+            
+           
+             <span>CPU <span class="w">${cpu}</span></span>
+           
             <span>LAT <span class="metric">${lat}</span></span>
           </div>
         </header>

@@ -583,6 +583,11 @@ impl LupaEngine {
             }
 
             let final_score = rerank_score(score, &name, &path, mtime, &signals, now_unix);
+            let modified_from_index = if mtime > 0 {
+                Some(format_unix_seconds_local(mtime))
+            } else {
+                None
+            };
 
             hits.push(SearchHit {
                 path,
@@ -590,7 +595,7 @@ impl LupaEngine {
                 snippet: None,
                 size_bytes: None,
                 created: None,
-                modified: None,
+                modified: modified_from_index,
             });
         }
 
@@ -991,6 +996,15 @@ impl LupaEngine {
 fn format_system_time_local(ts: SystemTime) -> String {
     let dt: DateTime<Local> = DateTime::<Local>::from(ts);
     dt.format("%Y-%m-%d %H:%M").to_string()
+}
+
+fn format_unix_seconds_local(ts: i64) -> String {
+    if let Some(dt_utc) = chrono::DateTime::from_timestamp(ts, 0) {
+        let dt_local: DateTime<Local> = dt_utc.with_timezone(&Local);
+        dt_local.format("%Y-%m-%d %H:%M").to_string()
+    } else {
+        "-".to_string()
+    }
 }
 
 fn resolve_fields(schema: &Schema) -> Result<Fields> {
