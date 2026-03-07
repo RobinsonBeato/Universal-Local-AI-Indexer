@@ -125,6 +125,12 @@ fn normalize_qa_paths(cfg: &mut LupaConfig) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn shell_path(p: &PathBuf) -> String {
+    let abs = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+    abs.display().to_string().replace('/', "\\")
+}
+
 fn server_alive(endpoint: &str) -> bool {
     let health = format!("{}/health", endpoint.trim_end_matches('/'));
     ureq::get(&health)
@@ -326,13 +332,17 @@ fn open_with(req: PathRequest) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let status = Command::new("rundll32.exe")
-            .arg("shell32.dll,OpenAs_RunDLL")
-            .arg(p.as_os_str())
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err(format!("Open with failed with status: {status}"));
+        let path_arg = shell_path(&p);
+        let quoted = format!("\"{path_arg}\"");
+        let launched = Command::new("OpenWith.exe").arg(&path_arg).spawn();
+        if launched.is_err() {
+            let launched2 = Command::new("rundll32.exe")
+                .arg("shell32.dll,OpenAs_RunDLL")
+                .arg(&quoted)
+                .spawn();
+            if launched2.is_err() {
+                return Err("Open with failed to launch".to_string());
+            }
         }
         Ok(())
     }
@@ -350,13 +360,19 @@ fn open_folder(req: PathRequest) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let status = Command::new("explorer.exe")
-            .arg("/select,")
-            .arg(p.as_os_str())
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err(format!("Open folder failed with status: {status}"));
+        let path_arg = shell_path(&p);
+        let select_arg = format!("/select,\"{path_arg}\"");
+        let launched = Command::new("explorer.exe").arg(&select_arg).spawn();
+        if launched.is_err() {
+            let folder = p
+                .parent()
+                .map(|v| v.to_path_buf())
+                .unwrap_or_else(|| p.clone());
+            let folder_arg = shell_path(&folder);
+            let launched_folder = Command::new("explorer.exe").arg(&folder_arg).spawn();
+            if launched_folder.is_err() {
+                return Err("Open folder failed to launch".to_string());
+            }
         }
         Ok(())
     }

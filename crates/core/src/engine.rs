@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Local};
 use rayon::prelude::*;
 use regex::Regex;
 use serde::Serialize;
@@ -48,6 +50,9 @@ pub struct SearchHit {
     pub path: String,
     pub score: f32,
     pub snippet: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -583,11 +588,24 @@ impl LupaEngine {
                 path,
                 score: final_score,
                 snippet: None,
+                size_bytes: None,
+                created: None,
+                modified: None,
             });
         }
 
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         hits.truncate(opts.limit);
+
+        if !hits.is_empty() {
+            hits.par_iter_mut().for_each(|hit| {
+                if let Ok(meta) = std::fs::metadata(&hit.path) {
+                    hit.size_bytes = Some(meta.len());
+                    hit.created = meta.created().ok().map(format_system_time_local);
+                    hit.modified = meta.modified().ok().map(format_system_time_local);
+                }
+            });
+        }
 
         if opts.highlight && !hits.is_empty() {
             let snippets = hits
@@ -968,6 +986,11 @@ impl LupaEngine {
                 .unwrap_or_else(|| "desconocido".to_string())
         ))
     }
+}
+
+fn format_system_time_local(ts: SystemTime) -> String {
+    let dt: DateTime<Local> = DateTime::<Local>::from(ts);
+    dt.format("%Y-%m-%d %H:%M").to_string()
 }
 
 fn resolve_fields(schema: &Schema) -> Result<Fields> {
