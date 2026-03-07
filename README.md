@@ -9,6 +9,24 @@ LUPA is ultra-efficient by design: fast local search, minimal resource usage, an
 
 - [Download Windows installers (.exe and .msi) - v0.1.0](https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0)
 
+## Community
+
+- Roadmap: [docs/roadmap.md](docs/roadmap.md)
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Good first issues: `https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22`
+- Help wanted: `https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22`
+
+### Contribute In 5 Minutes
+
+1. Open an issue labeled `good first issue`.
+2. Comment that you want to take it.
+3. Fork and create a branch from `main`.
+4. Implement and run:
+   - `cargo fmt --all --check`
+   - `cargo clippy --all-targets --all-features -- -D warnings`
+   - `cargo test --all`
+5. Open a PR using the template.
+
 ### Checksums (SHA-256)
 
 - `.exe`: `793d4b75e2b1e8b98c382265bd86fbd182b3d110a7e377fda1ce743a6d949376`
@@ -235,6 +253,8 @@ cargo test --all
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
 - Windows install/release: [docs/install-windows.md](docs/install-windows.md)
+- Roadmap: [docs/roadmap.md](docs/roadmap.md)
+- Issue seeds: [docs/issue-seeds.md](docs/issue-seeds.md)
 - WebPanel notes: [crates/gui/webpanel/README.md](crates/gui/webpanel/README.md)
 - Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
