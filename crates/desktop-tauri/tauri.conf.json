@@ -45,7 +45,11 @@
     ],
     "bundle": {
       "active": false,
-      "identifier": "com.lupa.desktop"
+      "identifier": "com.lupa.desktop",
+      "icon": [
+        "icons/main-icon.ico"
+        
+      ]
     },
     "security": {
       "csp": null
