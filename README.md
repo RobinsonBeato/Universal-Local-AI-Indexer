@@ -236,6 +236,7 @@ cargo test --all
 - Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
 - Windows install/release: [docs/install-windows.md](docs/install-windows.md)
 - WebPanel notes: [crates/gui/webpanel/README.md](crates/gui/webpanel/README.md)
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
