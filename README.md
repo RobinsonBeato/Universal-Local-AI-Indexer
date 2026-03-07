@@ -38,6 +38,30 @@ cargo build --workspace
 cargo run -p lupa-desktop-tauri
 ```
 
+### 2.1) Build Windows installer (.exe / .msi)
+
+Requirements:
+
+- Windows 10/11
+- WebView2 runtime installed
+- Rust toolchain + MSVC build tools
+
+Build release installers:
+
+```powershell
+cargo tauri build -p lupa-desktop-tauri
+```
+
+Artifacts are generated in:
+
+- `target_local/release/bundle/nsis/*.exe`
+- `target_local/release/bundle/msi/*.msi`
+
+Installer behavior:
+
+- standard install flow for public distribution
+- uses app icon from `crates/desktop-tauri/icons/main-icon.ico`
+
 ### 3) Run CLI
 
 ```bash
@@ -83,6 +107,10 @@ cargo run -p lupa -- --root "G:\\" doctor
   - metadata (name, path, type, created/modified, size)
   - quick actions (`Open`, `Open at match`, `Open with`, `Folder`, `Copy path`)
 - Document Chat panel (`Extractive` / `Local AI` modes).
+- First-run onboarding:
+  - language selection (`es` / `en`)
+  - terms acceptance (MIT)
+  - optional local AI setup trigger
 
 ## Document Chat Modes
 
@@ -179,4 +207,9 @@ cargo test --all
 
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - Benchmarks: [docs/benchmarks.md](docs/benchmarks.md)
+- Windows install/release: [docs/install-windows.md](docs/install-windows.md)
 - WebPanel notes: [crates/gui/webpanel/README.md](crates/gui/webpanel/README.md)
+
+## License
+
+MIT - Copyright (c) 2026 Robinson Beato

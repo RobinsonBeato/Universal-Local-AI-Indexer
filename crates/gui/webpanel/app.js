@@ -4,7 +4,14 @@ const EMPTY = {
   generated_at: "",
   app: { status: "Ready", root: "" },
   top: { query: "", busy: false, watch_running: false, hits: 0, latency_ms: null, cpu_pct: null },
-  settings: { language: "es", open: false },
+  settings: {
+    language: "es",
+    open: false,
+    onboarding_done: false,
+    terms_accepted: false,
+    ai_opt_in: false,
+    ai_installing: false,
+  },
   sidebar: {
     selected_filter: "recents",
     collections: [
@@ -38,6 +45,8 @@ const EMPTY = {
     chat_busy: false,
   },
 };
+
+const SETTINGS_STORAGE_KEY = "lupa.settings.v1";
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "tif", "tiff"]);
 const MEDIA_EXTS = new Set([
@@ -279,18 +288,49 @@ class LupaShell extends HTMLElement {
     return translate(this.lang(), key, vars);
   }
 
-  loadLanguagePreference() {
+  loadSettings() {
+    const defaults = {
+      language: "es",
+      open: false,
+      onboarding_done: false,
+      terms_accepted: false,
+      ai_opt_in: false,
+      ai_installing: false,
+    };
     try {
-      const saved = localStorage.getItem(LANG_STORAGE_KEY);
-      this.state.settings.language = resolveLang(saved || this.state.settings.language);
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      this.state.settings = { ...defaults, ...parsed, open: false, ai_installing: false };
+      const legacyLang = localStorage.getItem(LANG_STORAGE_KEY);
+      if (legacyLang) {
+        this.state.settings.language = resolveLang(legacyLang);
+      }
     } catch {
-      this.state.settings.language = resolveLang(this.state.settings.language);
+      this.state.settings = { ...defaults };
     }
+    this.state.settings.language = resolveLang(this.state.settings.language);
     this.state.sidebar.collections = withCollectionCounts(
       this.state.results.items || [],
       this.state.sidebar.selected_filter || "recents",
       this.lang(),
     );
+  }
+
+  persistSettings() {
+    try {
+      localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          language: resolveLang(this.state.settings.language),
+          onboarding_done: !!this.state.settings.onboarding_done,
+          terms_accepted: !!this.state.settings.terms_accepted,
+          ai_opt_in: !!this.state.settings.ai_opt_in,
+        }),
+      );
+      localStorage.setItem(LANG_STORAGE_KEY, resolveLang(this.state.settings.language));
+    } catch {
+      // ignore storage errors
+    }
   }
 
   setLanguage(lang) {
@@ -302,12 +342,40 @@ class LupaShell extends HTMLElement {
       this.state.sidebar.selected_filter || "recents",
       next,
     );
-    try {
-      localStorage.setItem(LANG_STORAGE_KEY, next);
-    } catch {
-      // ignore storage errors
-    }
+    this.persistSettings();
     this.paint();
+  }
+
+  completeOnboarding() {
+    if (!this.state.settings.terms_accepted) {
+      this.state.app.status = this.t("onboarding_required_terms");
+      this.paint();
+      return;
+    }
+    this.state.settings.onboarding_done = true;
+    this.state.right_panel.chat_mode = this.state.settings.ai_opt_in ? "local_model" : "extractive";
+    this.persistSettings();
+    this.state.app.status = this.t("app_ready");
+    this.paint();
+  }
+
+  async installLocalAiRuntime() {
+    if (this.mode !== "tauri") return;
+    if (this.state.settings.ai_installing) return;
+    this.state.settings.ai_installing = true;
+    this.state.app.status = this.t("onboarding_ai_installing");
+    this.paint();
+    try {
+      await invokeDesktop("install_local_ai", {});
+      this.state.settings.ai_opt_in = true;
+      this.persistSettings();
+      this.state.app.status = this.t("onboarding_ai_ready");
+    } catch (err) {
+      this.state.app.status = this.t("onboarding_ai_error", { error: err });
+    } finally {
+      this.state.settings.ai_installing = false;
+      this.paint();
+    }
   }
 
   connectedCallback() {
@@ -320,7 +388,7 @@ class LupaShell extends HTMLElement {
     this._snippetTimer = null;
     this._snippetBusy = false;
     this._cpuTimer = null;
-    this.loadLanguagePreference();
+    this.loadSettings();
     this.mode = tauriInvoke() ? "tauri" : "bridge";
     requestAnimationFrame(() => this.paint());
 
@@ -408,6 +476,7 @@ class LupaShell extends HTMLElement {
     const rightCol = s.right_panel.visible === false ? "0px" : "340px";
     const leftCol = "236px";
     const settingsOpen = s.settings?.open === true;
+    const onboardingOpen = s.settings?.onboarding_done !== true;
     const lang = this.lang();
 
     this.innerHTML = `
@@ -439,6 +508,12 @@ class LupaShell extends HTMLElement {
                       <div class="settings-title">${esc(this.t("settings_language"))}</div>
                       <button class="lang-item ${lang === "es" ? "active" : ""}" data-lang="es">${esc(this.t("language_es"))}</button>
                       <button class="lang-item ${lang === "en" ? "active" : ""}" data-lang="en">${esc(this.t("language_en"))}</button>
+                      <div class="settings-divider"></div>
+                      <button class="settings-link" id="settings-open-license">${esc(this.t("settings_terms"))}</button>
+                      <label class="settings-toggle-row">
+                        <input type="checkbox" id="settings-ai-optin" ${s.settings.ai_opt_in ? "checked" : ""} />
+                        <span>${esc(this.t("settings_ai"))}</span>
+                      </label>
                     </div>`
                   : ""
               }
@@ -458,6 +533,36 @@ class LupaShell extends HTMLElement {
           <span>${esc(s.app.status || this.t("app_ready"))}</span>
           <span>${esc(this.t("statusbar_results", { hits: s.results.total_hits, lat, root: s.app.root || "-" }))}</span>
         </footer>
+        ${
+          onboardingOpen
+            ? `<div class="onboarding-backdrop">
+                 <section class="onboarding-modal">
+                   <h2>${esc(this.t("onboarding_title"))}</h2>
+                   <p>${esc(this.t("onboarding_subtitle"))}</p>
+                   <div class="onboarding-row">
+                     <button class="lang-item ${lang === "es" ? "active" : ""}" data-lang="es">${esc(this.t("language_es"))}</button>
+                     <button class="lang-item ${lang === "en" ? "active" : ""}" data-lang="en">${esc(this.t("language_en"))}</button>
+                   </div>
+                   <label class="onboarding-check">
+                     <input type="checkbox" id="onboard-terms" ${s.settings.terms_accepted ? "checked" : ""} />
+                     <span>${esc(this.t("onboarding_terms_label"))}</span>
+                   </label>
+                   <button class="settings-link" id="onboard-open-license">${esc(this.t("onboarding_terms_open"))}</button>
+                   <label class="onboarding-check">
+                     <input type="checkbox" id="onboard-ai" ${s.settings.ai_opt_in ? "checked" : ""} />
+                     <span>${esc(this.t("onboarding_ai_label"))}</span>
+                   </label>
+                   <p class="onboarding-hint">${esc(this.t("onboarding_ai_hint"))}</p>
+                   <div class="onboarding-actions">
+                     <button class="action-btn" id="onboard-install-ai" ${this.mode !== "tauri" || s.settings.ai_installing ? "disabled" : ""}>${
+                       esc(s.settings.ai_installing ? this.t("onboarding_ai_installing") : this.t("onboarding_ai_install"))
+                     }</button>
+                     <button class="search-btn" id="onboard-continue" ${s.settings.terms_accepted ? "" : "disabled"}>${esc(this.t("onboarding_continue"))}</button>
+                   </div>
+                 </section>
+               </div>`
+            : ""
+        }
       </div>
     `;
 
@@ -537,6 +642,23 @@ class LupaShell extends HTMLElement {
         this.setLanguage(el.getAttribute("data-lang") || "es");
       });
     });
+    const settingsOpenLicense = this.querySelector("#settings-open-license");
+    if (settingsOpenLicense) {
+      settingsOpenLicense.addEventListener("click", async () => {
+        if (this.mode === "tauri") {
+          await this.runPathAction("open", "LICENSE");
+        } else {
+          window.open("./LICENSE", "_blank", "noopener,noreferrer");
+        }
+      });
+    }
+    const settingsAiOptin = this.querySelector("#settings-ai-optin");
+    if (settingsAiOptin) {
+      settingsAiOptin.addEventListener("change", (ev) => {
+        this.state.settings.ai_opt_in = !!ev.target.checked;
+        this.persistSettings();
+      });
+    }
     if (settingsOpen) {
       document.addEventListener(
         "click",
@@ -548,6 +670,40 @@ class LupaShell extends HTMLElement {
         },
         { once: true },
       );
+    }
+
+    const onboardTerms = this.querySelector("#onboard-terms");
+    if (onboardTerms) {
+      onboardTerms.addEventListener("change", (ev) => {
+        this.state.settings.terms_accepted = !!ev.target.checked;
+        this.persistSettings();
+        this.paint();
+      });
+    }
+    const onboardAi = this.querySelector("#onboard-ai");
+    if (onboardAi) {
+      onboardAi.addEventListener("change", (ev) => {
+        this.state.settings.ai_opt_in = !!ev.target.checked;
+        this.persistSettings();
+      });
+    }
+    const onboardContinue = this.querySelector("#onboard-continue");
+    if (onboardContinue) {
+      onboardContinue.addEventListener("click", () => this.completeOnboarding());
+    }
+    const onboardInstallAi = this.querySelector("#onboard-install-ai");
+    if (onboardInstallAi) {
+      onboardInstallAi.addEventListener("click", async () => this.installLocalAiRuntime());
+    }
+    const onboardOpenLicense = this.querySelector("#onboard-open-license");
+    if (onboardOpenLicense) {
+      onboardOpenLicense.addEventListener("click", async () => {
+        if (this.mode === "tauri") {
+          await this.runPathAction("open", "LICENSE");
+        } else {
+          window.open("./LICENSE", "_blank", "noopener,noreferrer");
+        }
+      });
     }
 
     if (!this._hotkeysBound) {

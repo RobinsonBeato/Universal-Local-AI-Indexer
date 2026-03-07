@@ -608,6 +608,37 @@ fn ask_document(
     })
 }
 
+#[tauri::command]
+fn install_local_ai() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        let script = cwd.join("scripts").join("ai").join("setup-local-ai.ps1");
+        if !script.is_file() {
+            return Err(format!(
+                "Local AI setup script not found: {}",
+                script.display()
+            ));
+        }
+        let status = Command::new("powershell.exe")
+            .arg("-NoProfile")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(script)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("Local AI install failed with status: {status}"));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("install_local_ai is currently implemented for Windows only".to_string())
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(ModelServerState::default())
@@ -637,7 +668,8 @@ fn main() {
             copy_path,
             open_at_match,
             pick_folder,
-            ask_document
+            ask_document,
+            install_local_ai
         ])
         .on_window_event(|event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event.event() {

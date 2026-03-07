@@ -44,12 +44,22 @@
       }
     ],
     "bundle": {
-      "active": false,
+      "active": true,
+      "targets": [
+        "nsis",
+        "msi"
+      ],
       "identifier": "com.lupa.desktop",
       "icon": [
         "icons/main-icon.ico"
-        
-      ]
+      ],
+      "copyright": "Copyright (c) 2026 Robinson Beato",
+      "category": "Utility",
+      "shortDescription": "Ultra-fast local offline search for Windows",
+      "longDescription": "LUPA indexes and searches local files offline with a privacy-first architecture."
+    },
+    "updater": {
+      "active": false
     },
     "security": {
       "csp": null
