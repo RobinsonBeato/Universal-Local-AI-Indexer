@@ -9,11 +9,15 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@shikijs/core": "^4.0.1",
+    "@shikijs/engine-javascript": "^4.0.1",
     "@tailwindcss/typography": "^0.5.19",
     "astro": "^5.2.0",
     "gsap": "^3.12.5",
     "marked": "^17.0.4",
-    "motion": "^11.11.13"
+    "marked-shiki": "^1.2.1",
+    "motion": "^11.11.13",
+    "shiki": "^4.0.1"
   },
   "devDependencies": {
     "@astrojs/tailwind": "^5.1.2",

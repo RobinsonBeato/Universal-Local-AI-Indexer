@@ -668,6 +668,12 @@ body {
   font-size: 14px;
   padding: 9px 12px;
   outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.lupa-docs-search:focus {
+  border-color: rgba(189, 153, 255, 0.6);
+  box-shadow: 0 0 12px rgba(164, 126, 255, 0.15);
 }
 
 .lupa-docs-search::placeholder {
@@ -682,11 +688,25 @@ body {
   padding: 7px 11px;
   font-size: 12px;
   font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.lupa-docs-header-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(210, 185, 255, 0.5);
+  transform: translateY(-1px);
 }
 
 .lupa-docs-header-link.is-primary {
   border-color: rgba(199, 174, 255, 0.55);
   background: linear-gradient(140deg, rgba(109, 127, 255, 0.42), rgba(173, 88, 255, 0.4));
+  box-shadow: 0 0 10px rgba(146, 90, 255, 0.1);
+}
+
+.lupa-docs-header-link.is-primary:hover {
+  background: linear-gradient(140deg, rgba(122, 138, 255, 0.52), rgba(185, 105, 255, 0.5));
+  box-shadow: 0 4px 14px rgba(146, 90, 255, 0.25);
+  border-color: rgba(219, 198, 255, 0.7);
 }
 
 .lupa-docs-sidebar {
@@ -781,16 +801,19 @@ body {
   font-size: 14px;
   padding: 7px 9px;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .lupa-docs-item:hover {
-  background: rgba(18, 24, 44, 0.72);
-  border-color: rgba(176, 192, 238, 0.2);
+  background: rgba(28, 36, 60, 0.5);
+  border-color: rgba(176, 192, 238, 0.25);
+  color: #fff;
 }
 
 .lupa-docs-item.is-active {
   background: linear-gradient(140deg, rgba(111, 124, 252, 0.4), rgba(174, 97, 255, 0.38));
   border-color: rgba(197, 170, 255, 0.48);
+  box-shadow: 0 0 12px rgba(143, 114, 255, 0.15);
   color: #f4f7ff;
 }
 
@@ -836,6 +859,47 @@ body {
 .lupa-docs-section h2 {
   margin: 0 0 16px;
   color: rgba(241, 246, 255, 0.98);
+}
+
+/* --- Professional Shiki Code Block Styles --- */
+.shiki-container pre.shiki {
+  margin: 1.5em 0;
+  padding: 1.25rem 1rem 1rem;
+  border-radius: 12px;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(13, 17, 23, 0.85) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  position: relative;
+}
+
+.shiki-container pre.shiki::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #ff5f56;
+  box-shadow: 18px 0 0 #ffbd2e, 36px 0 0 #27c93f;
+}
+
+.shiki-container pre.shiki code {
+  display: block;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin-top: 16px;
+}
+
+.shiki-container p code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+  color: #c9d1d9;
 }
 
 .lupa-docs-section pre {

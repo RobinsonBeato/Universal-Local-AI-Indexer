@@ -1,6 +1,39 @@
 ---
 import "../../styles/global.css";
 import { groupedDocs, loadDocs } from "../../lib/docs";
+import { marked } from "marked";
+import { createHighlighter } from "shiki";
+import markedShiki from "marked-shiki";
+
+const shiki = await createHighlighter({
+  themes: ["github-dark-default"],
+  langs: [
+    "javascript", 
+    "typescript", 
+    "css", 
+    "html", 
+    "rust", 
+    "bash", 
+    "shellscript", 
+    "powershell", 
+    "json", 
+    "toml", 
+    "yaml", 
+    "markdown"
+  ],
+});
+
+marked.use(
+  markedShiki({
+    highlight(code, lang, props) {
+      return shiki.codeToHtml(code, {
+        lang: lang || "text",
+        theme: "github-dark-default",
+        meta: { __raw: props.join(" ") },
+      });
+    },
+  })
+);
 
 export async function getStaticPaths() {
   const docs = await loadDocs();
@@ -90,12 +123,15 @@ const current = docs.find((d) => d.slug === requestedSlug) ?? docs[0];
           <p>{current.lines} lines · {current.sections.length} sections</p>
         </div>
         <div class="lupa-docs-sections">
-          {current.sections.map((s, i) => (
-            <section class="lupa-docs-section" id={`sec-${current.slug}-${i}`}>
-              <h2>{s.title}</h2>
-              <pre>{s.body}</pre>
-            </section>
-          ))}
+          {current.sections.map(async (s, i) => {
+            const htmlContent = await marked.parse(s.body);
+            return (
+              <section class="lupa-docs-section" id={`sec-${current.slug}-${i}`}>
+                <h2 class="text-2xl font-bold tracking-tight mb-4">{s.title}</h2>
+                <div class="prose prose-invert prose-p:text-gray-300 prose-headings:text-gray-100 prose-a:text-indigo-400 hover:prose-a:text-indigo-300 prose-code:text-indigo-300 max-w-none shiki-container" set:html={htmlContent} />
+              </section>
+            );
+          })}
         </div>
       </section>
 
