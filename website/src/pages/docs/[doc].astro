@@ -46,6 +46,15 @@ const docs = await loadDocs();
 const grouped = groupedDocs(docs);
 const requestedSlug = Astro.params.doc;
 const current = docs.find((d) => d.slug === requestedSlug) ?? docs[0];
+
+const searchIndex = docs.flatMap(doc => 
+  doc.sections.map((s, i) => ({
+    title: s.title,
+    bodySnippet: s.body.substring(0, 120).replace(/\n/g, " ") + (s.body.length > 120 ? "..." : ""),
+    url: `/docs/${doc.slug}#sec-${doc.slug}-${i}`,
+    docLabel: doc.label
+  }))
+);
 ---
 
 <html lang="en">
@@ -58,9 +67,18 @@ const current = docs.find((d) => d.slug === requestedSlug) ?? docs[0];
   <body>
     <main class="lupa-docs-layout">
       <header class="lupa-docs-header">
-        <a class="lupa-docs-brand" href="/">LUPA DOCS</a>
+        <a
+          class="brand-mark"
+          href="/docs"
+          aria-label="LUPA documentation"
+          title="LUPA Docs"
+        >
+          <span class="brand-dot" aria-hidden="true"></span>
+          <span class="brand-text">LUPA DOCS</span>
+        </a>
         <div class="lupa-docs-search-wrap">
-          <input id="docs-search" class="lupa-docs-search" type="text" placeholder="Search docs..." />
+          <input id="docs-search" class="lupa-docs-search" type="text" placeholder="Search docs..." autocomplete="off" />
+          <div id="docs-search-results" class="lupa-search-results" style="display: none;"></div>
         </div>
         <div class="lupa-docs-header-actions">
           <span class="lupa-docs-chip">Dark</span>
@@ -145,17 +163,49 @@ const current = docs.find((d) => d.slug === requestedSlug) ?? docs[0];
       </aside>
     </main>
 
-    <script>
+    <script is:inline define:vars={{ searchIndex }}>
       const input = document.getElementById("docs-search");
-      const items = Array.from(document.querySelectorAll(".lupa-docs-item, .lupa-docs-primary-item"));
-      if (input) {
+      const resultsContainer = document.getElementById("docs-search-results");
+      
+      if (input && resultsContainer) {
         input.addEventListener("input", () => {
-          const q = (input.value || "").toLowerCase().trim();
-          items.forEach((el) => {
-            const txt = (el.textContent || "").toLowerCase();
-            const show = !q || txt.includes(q);
-            el.style.display = show ? "" : "none";
-          });
+          const q = input.value.toLowerCase().trim();
+          if (!q) {
+            resultsContainer.style.display = "none";
+            return;
+          }
+          
+          const hits = searchIndex.filter(item => 
+            item.title.toLowerCase().includes(q) || 
+            item.bodySnippet.toLowerCase().includes(q) ||
+            item.docLabel.toLowerCase().includes(q)
+          ).slice(0, 8); // Top 8 results
+          
+          if (hits.length === 0) {
+            resultsContainer.innerHTML = '<div class="lupa-search-empty">No results found</div>';
+          } else {
+            resultsContainer.innerHTML = hits.map(hit => `
+              <a href="${hit.url}" class="lupa-search-result-item">
+                <div class="lupa-search-result-title">${hit.title} <span class="lupa-search-result-badge">${hit.docLabel}</span></div>
+                <div class="lupa-search-result-snippet">${hit.bodySnippet}</div>
+              </a>
+            `).join("");
+          }
+          resultsContainer.style.display = "block";
+        });
+
+        // Hide dropdown when clicking outside
+        document.addEventListener("click", (e) => {
+          if (!input.contains(e.target) && !resultsContainer.contains(e.target)) {
+            resultsContainer.style.display = "none";
+          }
+        });
+        
+        // Show dropdown on input focus if there is text
+        input.addEventListener("focus", () => {
+          if (input.value.trim().length > 0) {
+            resultsContainer.style.display = "block";
+          }
         });
       }
     </script>
