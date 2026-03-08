@@ -668,6 +668,18 @@ body {
   font-size: 20px;
 }
 
+/* Reset the main landing page logo styles for the docs header */
+.lupa-docs-header .brand-mark {
+  position: static;
+  margin: 0;
+  z-index: 1;
+}
+
+.lupa-docs-header .brand-text {
+  font-size: 18px;
+  letter-spacing: 0.3em;
+}
+
 .lupa-docs-header-actions {
   display: inline-flex;
   gap: 8px;
@@ -953,6 +965,7 @@ body {
 
 .lupa-docs-section {
   padding-bottom: 32px;
+  scroll-margin-top: 90px;
 }
 
 .lupa-docs-section h2 {

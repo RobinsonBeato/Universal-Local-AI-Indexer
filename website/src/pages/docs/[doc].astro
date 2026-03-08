@@ -81,10 +81,9 @@ const searchIndex = docs.flatMap(doc =>
           <div id="docs-search-results" class="lupa-search-results" style="display: none;"></div>
         </div>
         <div class="lupa-docs-header-actions">
-          <span class="lupa-docs-chip">Dark</span>
-          <span class="lupa-docs-chip">English</span>
+          
           <a href="/" class="lupa-docs-header-link">Landing</a>
-          <a href="/docs" class="lupa-docs-header-link">Docs</a>
+
           <a href="https://github.com/RobinsonBeato/Universal-Local-AI-Indexer" class="lupa-docs-header-link is-primary">GitHub</a>
         </div>
       </header>
@@ -198,6 +197,14 @@ const searchIndex = docs.flatMap(doc =>
         document.addEventListener("click", (e) => {
           if (!input.contains(e.target) && !resultsContainer.contains(e.target)) {
             resultsContainer.style.display = "none";
+          }
+        });
+        
+        // Hide dropdown and clear input when a result is clicked
+        resultsContainer.addEventListener("click", (e) => {
+          if (e.target.closest("a")) {
+            resultsContainer.style.display = "none";
+            input.value = "";
           }
         });
         
