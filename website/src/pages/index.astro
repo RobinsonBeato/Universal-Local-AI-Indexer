@@ -1,5 +1,8 @@
 ﻿---
 import "../styles/global.css";
+const BASE = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
 ---
 
 <html lang="en">
@@ -36,7 +39,7 @@ import "../styles/global.css";
         preload="auto"
         aria-hidden="true"
       >
-        <source src="/video/test1.loop.mp4" type="video/mp4" />
+        <source src={`${BASE}video/test1.loop.mp4`} type="video/mp4" />
 
       </video>
       <div class="video-loop-fade" aria-hidden="true"></div>
@@ -49,7 +52,7 @@ import "../styles/global.css";
       <header class="top-controls">
         <a
           class="doc-btn"
-          href="/docs"
+          href={`${BASE}docs`}
           aria-label="Open documentation"
           title="Documentation"
         >

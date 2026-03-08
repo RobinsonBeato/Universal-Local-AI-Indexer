@@ -4,6 +4,10 @@ import { groupedDocs, loadDocs } from "../lib/docs";
 import { marked } from "marked";
 import { createHighlighter } from "shiki";
 import markedShiki from "marked-shiki";
+const BASE = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+const docHref = (slug: string) => `${BASE}docs/${slug}`;
 
 const shiki = await createHighlighter({
   themes: ["github-dark-default"],
@@ -43,7 +47,7 @@ const searchIndex = docs.flatMap(doc =>
   doc.sections.map((s, i) => ({
     title: s.title,
     bodySnippet: s.body.substring(0, 120).replace(/\n/g, " ") + (s.body.length > 120 ? "..." : ""),
-    url: `/docs/${doc.slug}#sec-${doc.slug}-${i}`,
+    url: `${BASE}docs/${doc.slug}#sec-${doc.slug}-${i}`,
     docLabel: doc.label
   }))
 );
@@ -61,7 +65,7 @@ const searchIndex = docs.flatMap(doc =>
       <header class="lupa-docs-header">
         <a
           class="brand-mark"
-          href="/"
+          href={BASE}
           aria-label="LUPA documentation"
           title="LUPA Docs"
         >
@@ -74,7 +78,7 @@ const searchIndex = docs.flatMap(doc =>
         </div>
         <div class="lupa-docs-header-actions">
 
-          <a href="/" class="lupa-docs-header-link">Landing</a>
+          <a href={BASE} class="lupa-docs-header-link">Landing</a>
 
           <a href="https://github.com/RobinsonBeato/Universal-Local-AI-Indexer" class="lupa-docs-header-link is-primary">GitHub</a>
         </div>
@@ -84,7 +88,7 @@ const searchIndex = docs.flatMap(doc =>
         <div class="lupa-docs-side-head">Navigation</div>
         <div class="lupa-docs-primary">
           {docs.slice(0, 5).map((doc) => (
-            <a class={`lupa-docs-primary-item ${doc.slug === current.slug ? "is-current" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+            <a class={`lupa-docs-primary-item ${doc.slug === current.slug ? "is-current" : ""}`} href={docHref(doc.slug)}>{doc.label}</a>
           ))}
         </div>
 
@@ -92,7 +96,7 @@ const searchIndex = docs.flatMap(doc =>
           <summary>Getting started</summary>
           <div class="lupa-docs-items">
             {grouped.start.map((doc) => (
-              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={docHref(doc.slug)}>{doc.label}</a>
             ))}
           </div>
         </details>
@@ -101,7 +105,7 @@ const searchIndex = docs.flatMap(doc =>
           <summary>Core system</summary>
           <div class="lupa-docs-items">
             {grouped.core.map((doc) => (
-              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={docHref(doc.slug)}>{doc.label}</a>
             ))}
           </div>
         </details>
@@ -110,7 +114,7 @@ const searchIndex = docs.flatMap(doc =>
           <summary>Planning and ops</summary>
           <div class="lupa-docs-items">
             {grouped.planning.map((doc) => (
-              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={docHref(doc.slug)}>{doc.label}</a>
             ))}
           </div>
         </details>
@@ -119,7 +123,7 @@ const searchIndex = docs.flatMap(doc =>
           <summary>Legal</summary>
           <div class="lupa-docs-items">
             {grouped.legal.map((doc) => (
-              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={docHref(doc.slug)}>{doc.label}</a>
             ))}
           </div>
         </details>

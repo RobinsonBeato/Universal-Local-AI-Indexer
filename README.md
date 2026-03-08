@@ -14,6 +14,7 @@ Under the hood, it is engineered for low-latency local retrieval with bounded re
 ## Download
 
 - [Download Windows installers (.exe and .msi) - v0.1.0](https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0)
+- [Live Documentation Website (GitHub Pages)](https://robinsonbeato.github.io/Universal-Local-AI-Indexer/)
 
 ## Community
 
