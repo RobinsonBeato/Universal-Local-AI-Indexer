@@ -1,0 +1,123 @@
+﻿---
+import "../styles/global.css";
+import { groupedDocs, loadDocs } from "../lib/docs";
+import { marked } from "marked";
+
+const docs = await loadDocs();
+const grouped = groupedDocs(docs);
+const current = docs[0];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LUPA Docs</title>
+    <meta name="description" content="LUPA documentation loaded directly from markdown files in the repository." />
+  </head>
+  <body>
+    <main class="lupa-docs-layout">
+      <header class="lupa-docs-header">
+        <a class="lupa-docs-brand" href="/">LUPA DOCS</a>
+        <div class="lupa-docs-search-wrap">
+          <input id="docs-search" class="lupa-docs-search" type="text" placeholder="Search docs..." />
+        </div>
+        <div class="lupa-docs-header-actions">
+          <span class="lupa-docs-chip">Dark</span>
+          <span class="lupa-docs-chip">English</span>
+          <a href="/" class="lupa-docs-header-link">Landing</a>
+          <a href="/docs" class="lupa-docs-header-link">Docs</a>
+          <a href="https://github.com/RobinsonBeato/Universal-Local-AI-Indexer" class="lupa-docs-header-link is-primary">GitHub</a>
+        </div>
+      </header>
+
+      <aside class="lupa-docs-sidebar" aria-label="Documentation navigation">
+        <div class="lupa-docs-side-head">Navigation</div>
+        <div class="lupa-docs-primary">
+          {docs.slice(0, 5).map((doc) => (
+            <a class={`lupa-docs-primary-item ${doc.slug === current.slug ? "is-current" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+          ))}
+        </div>
+
+        <details open class="lupa-docs-group">
+          <summary>Getting started</summary>
+          <div class="lupa-docs-items">
+            {grouped.start.map((doc) => (
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+            ))}
+          </div>
+        </details>
+
+        <details open class="lupa-docs-group">
+          <summary>Core system</summary>
+          <div class="lupa-docs-items">
+            {grouped.core.map((doc) => (
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+            ))}
+          </div>
+        </details>
+
+        <details open class="lupa-docs-group">
+          <summary>Planning and ops</summary>
+          <div class="lupa-docs-items">
+            {grouped.planning.map((doc) => (
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+            ))}
+          </div>
+        </details>
+
+        <details open class="lupa-docs-group">
+          <summary>Legal</summary>
+          <div class="lupa-docs-items">
+            {grouped.legal.map((doc) => (
+              <a class={`lupa-docs-item ${doc.slug === current.slug ? "is-active" : ""}`} href={`/docs/${doc.slug}`}>{doc.label}</a>
+            ))}
+          </div>
+        </details>
+      </aside>
+
+      <section class="lupa-docs-content">
+        <div class="lupa-docs-titlebar">
+          <p class="lupa-docs-kicker">{current.key}</p>
+          <h1>{current.label}</h1>
+          <p>{current.lines} lines · {current.sections.length} sections</p>
+        </div>
+        <div class="lupa-docs-sections">
+          {current.sections.map((s, i) => {
+            const htmlContent = marked.parse(s.body);
+            return (
+              <section class="lupa-docs-section" id={`sec-${current.slug}-${i}`}>
+                <h2 class="text-2xl font-bold tracking-tight mb-4">{s.title}</h2>
+                <div class="prose prose-invert prose-p:text-gray-300 prose-headings:text-gray-100 prose-a:text-indigo-400 hover:prose-a:text-indigo-300 prose-code:text-indigo-300 prose-pre:bg-gray-900/80 max-w-none" set:html={htmlContent} />
+              </section>
+            );
+          })}
+        </div>
+      </section>
+
+      <aside class="lupa-docs-right" aria-label="Document outline">
+        <h3>On this page</h3>
+        <div class="lupa-docs-outline">
+          {current.sections.map((s, i) => (
+            <a href={`#sec-${current.slug}-${i}`}>{s.title}</a>
+          ))}
+        </div>
+      </aside>
+    </main>
+
+    <script>
+      const input = document.getElementById("docs-search");
+      const items = Array.from(document.querySelectorAll(".lupa-docs-item, .lupa-docs-primary-item"));
+      if (input) {
+        input.addEventListener("input", () => {
+          const q = (input.value || "").toLowerCase().trim();
+          items.forEach((el) => {
+            const txt = (el.textContent || "").toLowerCase();
+            const show = !q || txt.includes(q);
+            el.style.display = show ? "" : "none";
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
