@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/RobinsonBeato/Universal-Local-AI-Indexer)](https://github.com/RobinsonBeato/Universal-Local-AI-Indexer/releases/tag/v0.1.0)
 
-![LUPA demo](./demo.gif)
+<img src="./demo.gif" alt="LUPA demo" width="100%" />
 
 Ultra-fast local indexing and search for Windows, built in Rust.  
 Offline-first, privacy-first, no cloud dependency, no telemetry by default.
