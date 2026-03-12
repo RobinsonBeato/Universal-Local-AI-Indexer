@@ -4,10 +4,39 @@ import { groupedDocs, loadDocs } from "../lib/docs";
 import { marked } from "marked";
 import { createHighlighter } from "shiki";
 import markedShiki from "marked-shiki";
+import path from "node:path";
 const BASE = import.meta.env.BASE_URL.endsWith("/")
   ? import.meta.env.BASE_URL
   : `${import.meta.env.BASE_URL}/`;
 const docHref = (slug: string) => `${BASE}docs/${slug}`;
+const withBase = (p: string) => `${BASE}${p.replace(/^\/+/, "")}`;
+
+const resolveAssetPath = (docKey: string, rawUrl: string) => {
+  if (
+    !rawUrl ||
+    rawUrl.startsWith("http://") ||
+    rawUrl.startsWith("https://") ||
+    rawUrl.startsWith("mailto:") ||
+    rawUrl.startsWith("data:") ||
+    rawUrl.startsWith("#")
+  ) {
+    return rawUrl;
+  }
+  if (rawUrl.startsWith("/")) return withBase(rawUrl);
+  const baseDir = docKey.startsWith("docs/") ? "docs" : "";
+  return withBase(path.posix.normalize(path.posix.join(baseDir, rawUrl)));
+};
+
+const rewriteRelativeLinks = (body: string, docKey: string) => {
+  let out = body;
+  out = out.replace(/(!?\[[^\]]*\]\()([^)]+)(\))/g, (_m, p1, url, p3) => {
+    return `${p1}${resolveAssetPath(docKey, String(url).trim())}${p3}`;
+  });
+  out = out.replace(/(<(?:img|a)[^>]*(?:src|href)=["'])([^"']+)(["'][^>]*>)/gi, (_m, p1, url, p3) => {
+    return `${p1}${resolveAssetPath(docKey, String(url).trim())}${p3}`;
+  });
+  return out;
+};
 
 const shiki = await createHighlighter({
   themes: ["github-dark-default"],
@@ -63,6 +92,18 @@ const searchIndex = docs.flatMap(doc =>
   <body>
     <main class="lupa-docs-layout">
       <header class="lupa-docs-header">
+        <button
+          class="lupa-docs-menu-btn"
+          type="button"
+          aria-label="Open documentation navigation"
+          aria-controls="docs-sidebar"
+          aria-expanded="false"
+          data-docs-menu-toggle
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
         <a
           class="brand-mark"
           href={BASE}
@@ -84,7 +125,9 @@ const searchIndex = docs.flatMap(doc =>
         </div>
       </header>
 
-      <aside class="lupa-docs-sidebar" aria-label="Documentation navigation">
+      <div class="lupa-docs-overlay" data-docs-overlay></div>
+
+      <aside class="lupa-docs-sidebar" id="docs-sidebar" aria-label="Documentation navigation">
         <div class="lupa-docs-side-head">Navigation</div>
         <div class="lupa-docs-primary">
           {docs.slice(0, 5).map((doc) => (
@@ -137,7 +180,7 @@ const searchIndex = docs.flatMap(doc =>
         </div>
         <div class="lupa-docs-sections">
           {current.sections.map(async (s, i) => {
-            const htmlContent = await marked.parse(s.body);
+            const htmlContent = await marked.parse(rewriteRelativeLinks(s.body, current.key));
             return (
               <section class="lupa-docs-section" id={`sec-${current.slug}-${i}`}>
                 <h2 class="text-2xl font-bold tracking-tight mb-4">{s.title}</h2>
@@ -161,6 +204,38 @@ const searchIndex = docs.flatMap(doc =>
     <script is:inline define:vars={{ searchIndex }}>
       const input = document.getElementById("docs-search");
       const resultsContainer = document.getElementById("docs-search-results");
+      const menuToggle = document.querySelector("[data-docs-menu-toggle]");
+      const sidebar = document.getElementById("docs-sidebar");
+      const overlay = document.querySelector("[data-docs-overlay]");
+      const closeDocsMenu = () => {
+        document.body.classList.remove("docs-nav-open");
+        if (menuToggle) menuToggle.setAttribute("aria-expanded", "false");
+      };
+      const openDocsMenu = () => {
+        document.body.classList.add("docs-nav-open");
+        if (menuToggle) menuToggle.setAttribute("aria-expanded", "true");
+      };
+
+      if (menuToggle && sidebar && overlay) {
+        menuToggle.addEventListener("click", () => {
+          if (document.body.classList.contains("docs-nav-open")) {
+            closeDocsMenu();
+          } else {
+            openDocsMenu();
+          }
+        });
+
+        overlay.addEventListener("click", closeDocsMenu);
+        sidebar.querySelectorAll("a").forEach((link) => {
+          link.addEventListener("click", () => {
+            if (window.innerWidth <= 860) closeDocsMenu();
+          });
+        });
+
+        window.addEventListener("resize", () => {
+          if (window.innerWidth > 860) closeDocsMenu();
+        });
+      }
       
       if (input && resultsContainer) {
         input.addEventListener("input", () => {
